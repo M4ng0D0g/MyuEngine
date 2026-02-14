@@ -1,0 +1,31 @@
+name: Windows Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      - "**/*"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure (Release)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (Release)
+        run: cmake --build build --config Release
+
+      - name: Package (NSIS)
+        working-directory: build
+        run: cpack -G NSIS -C Release
+
+      - name: Upload Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyuEngine-Installer
+          path: build/*.exe

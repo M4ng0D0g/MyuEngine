@@ -39,7 +39,17 @@ set(MYUDOG_BUILD_TERMINAL     OFF CACHE BOOL "" FORCE)
 set(MYUDOG_BUILD_UTILS        ON  CACHE BOOL "" FORCE)
 
 set(MYUDOG_LIBS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../MyuDoglibs-Cpp")
-add_subdirectory("${MYUDOG_LIBS_DIR}" "${CMAKE_BINARY_DIR}/_deps/myudog-libs")
+if(EXISTS "${MYUDOG_LIBS_DIR}/CMakeLists.txt")
+    add_subdirectory("${MYUDOG_LIBS_DIR}" "${CMAKE_BINARY_DIR}/_deps/myudog-libs")
+else()
+    include(FetchContent)
+    FetchContent_Declare(myudog_libs
+        GIT_REPOSITORY https://github.com/M4ng0D0g/MyuDoglibs-Cpp.git
+        GIT_TAG        main
+        GIT_SHALLOW    TRUE
+    )
+    FetchContent_MakeAvailable(myudog_libs)
+endif()
 
 # =============================================================================
 # 2. Third-party dependencies
@@ -76,11 +86,7 @@ FetchContent_Declare(imgui_fetch
     GIT_TAG        v1.91.6-docking
     GIT_SHALLOW    TRUE
 )
-FetchContent_GetProperties(imgui_fetch)
-if(NOT imgui_fetch_POPULATED)
-    FetchContent_Populate(imgui_fetch)
-endif()
-
+FetchContent_MakeAvailable(imgui_fetch)
 set(IMGUI_DIR "${imgui_fetch_SOURCE_DIR}")
 add_library(imgui_lib STATIC
     "${IMGUI_DIR}/imgui.cpp"

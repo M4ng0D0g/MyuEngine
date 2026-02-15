@@ -139,6 +139,7 @@ set_target_properties(MyuEngine PROPERTIES
 # =============================================================================
 install(TARGETS MyuEngine RUNTIME DESTINATION bin COMPONENT Editor)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.txt" DESTINATION . COMPONENT Editor)
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/lang/" DESTINATION lang COMPONENT Editor)
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/extras/Tools/" DESTINATION tools COMPONENT Tools)
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/extras/Samples/" DESTINATION samples COMPONENT Samples)
 
@@ -159,6 +160,7 @@ if(WIN32)
     set(CPACK_NSIS_PACKAGE_NAME       "MyuEngine")
     set(CPACK_NSIS_INSTALL_ROOT       "$PROGRAMFILES64")
     set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+    set(CPACK_NSIS_MODIFY_PATH        ON)
     set(CPACK_NSIS_CREATE_ICONS       "CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MyuEngine.lnk' '$INSTDIR\\\\bin\\\\MyuEngine.exe'")
     set(CPACK_NSIS_DELETE_ICONS       "Delete '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MyuEngine.lnk'")
     set(CPACK_NSIS_MUI_FINISHPAGE_RUN "$INSTDIR\\\\bin\\\\MyuEngine.exe")
@@ -170,13 +172,19 @@ if(WIN32)
     )
     set(CPACK_NSIS_COMPONENT_INSTALL ON)
     set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\\\MyuEngine.exe")
-    set(CPACK_NSIS_EXTRA_PREINSTALL_COMMANDS
-        "ReadRegStr $0 HKCU 'Software\\\\MyuEngine' 'InstallDir'"
-        "StrCmp $0 '' +5"
-        "MessageBox MB_YESNO|MB_ICONQUESTION 'Previous installation detected at $0. Continue and overwrite?' IDYES +2"
-        "Abort"
-        "StrCpy $INSTDIR $0"
-    )
+    # Maintenance mode: detect previous install, offer Repair / Uninstall / Cancel
+    set(CPACK_NSIS_EXTRA_PREINSTALL_COMMANDS "
+        ReadRegStr $0 HKCU 'Software\\\\MyuEngine' 'InstallDir'\n\
+        StrCmp $0 '' done_maint\n\
+        MessageBox MB_YESNOCANCEL|MB_ICONQUESTION 'MyuEngine is already installed at $0.$\\r$\\n$\\r$\\nYes = Repair / Reinstall$\\nNo = Uninstall$\\nCancel = Abort' IDYES do_repair IDNO do_uninstall\n\
+        Abort\n\
+      do_uninstall:\n\
+        ExecWait '\\\"$0\\\\uninstall.exe\\\" /S'\n\
+        Goto done_maint\n\
+      do_repair:\n\
+        StrCpy $INSTDIR $0\n\
+      done_maint:\n\
+    ")
     set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS
         "WriteRegStr HKCU 'Software\\\\MyuEngine' 'InstallDir' '$INSTDIR'"
         "WriteRegStr HKCU 'Software\\\\MyuEngine' 'Version' '${PROJECT_VERSION}'"

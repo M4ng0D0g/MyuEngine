@@ -1,0 +1,8 @@
+# MyuEngine English Language File
+# Format: key=translation
+# Lines starting with # are comments, blank lines are ignored
+# For English, most keys map to themselves — only entries that
+# differ from the key need to be listed here.  The engine falls
+# back to the key when no entry is found, so this file can stay
+# mostly empty.  It is provided for completeness and as a
+# template for new translations.

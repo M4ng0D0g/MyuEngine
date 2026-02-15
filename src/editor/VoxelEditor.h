@@ -50,8 +50,8 @@ inline ImU32 rgbaToImU32(uint32_t c) {
     return IM_COL32(r, g, b, a);
 }
 
-inline void drawVoxelEditor(VoxelEditorState& st, bool allowHeavy = true) {
-    if (!ImGui::Begin("Voxel Modeler")) {
+inline void drawVoxelEditor(VoxelEditorState& st, const char* title, bool allowHeavy = true) {
+    if (!ImGui::Begin(title)) {
         ImGui::End();
         return;
     }

@@ -59,6 +59,11 @@ inline const char* elementTag(ElementType t) {
         case ElementType::Label:     return "span";
         case ElementType::Image:     return "img";
         case ElementType::Input:     return "input";
+        case ElementType::Checkbox:  return "div";
+        case ElementType::Toggle:    return "div";
+        case ElementType::Slider:    return "div";
+        case ElementType::Progress:  return "div";
+        case ElementType::Dropdown:  return "div";
         case ElementType::Container: return "div";
         default:                     return "div";
     }
@@ -130,22 +135,23 @@ inline void exportElementHTML(const UIElement& e, std::ostringstream& out, int i
         classAttr = " class=\"" + e.cssClass + "\"";
 
     std::string idAttr = " id=\"" + e.name + "\"";
+    std::string typeAttr = std::string(" data-myu-type=\"") + elementTypeName(e.type) + "\"";
     std::string styleAttr = " style=\"" + elementToCSS(e) + "\"";
 
     if (e.type == ElementType::Image) {
-        out << pad << "<img" << idAttr << classAttr << styleAttr;
+        out << pad << "<img" << idAttr << classAttr << typeAttr << styleAttr;
         if (!e.imagePath.empty()) out << " src=\"" << e.imagePath << "\"";
         out << " />\n";
         return;
     }
     if (e.type == ElementType::Input) {
-        out << pad << "<input" << idAttr << classAttr << styleAttr;
+        out << pad << "<input" << idAttr << classAttr << typeAttr << styleAttr;
         if (!e.text.empty()) out << " placeholder=\"" << e.text << "\"";
         out << " />\n";
         return;
     }
 
-    out << pad << "<" << tag << idAttr << classAttr << styleAttr << ">\n";
+    out << pad << "<" << tag << idAttr << classAttr << typeAttr << styleAttr << ">\n";
 
     if (!e.text.empty() && e.children.empty())
         out << pad << "  " << e.text << "\n";
@@ -317,11 +323,22 @@ inline void cssToStyle(const CSSProps& css, Style& s) {
     }
 }
 
+inline ElementType nameToType(const std::string& name) {
+    for (int i = 0; i < static_cast<int>(ElementType::kCount); ++i) {
+        auto t = static_cast<ElementType>(i);
+        if (name == elementTypeName(t))
+            return t;
+    }
+    return ElementType::Panel;
+}
+
 inline ElementType tagToType(const std::string& tag) {
     if (tag == "button") return ElementType::Button;
     if (tag == "span")   return ElementType::Label;
     if (tag == "img")    return ElementType::Image;
     if (tag == "input")  return ElementType::Input;
+    if (tag == "select") return ElementType::Dropdown;
+    if (tag == "progress") return ElementType::Progress;
     return ElementType::Panel;
 }
 
@@ -340,7 +357,7 @@ inline void importFromHTML(const std::string& html, UIElement& root) {
     // Match: <tag id="..." class="..." style="..."> or <tag ... />
     std::regex tagRx(R"(<(\w+)\s+([^>]*?)(/?)>)", std::regex::optimize);
     std::regex closeRx(R"(</(\w+)>)", std::regex::optimize);
-    std::regex attrRx(R"re((\w+)="([^"]*)")re");
+    std::regex attrRx(R"re(([\w-]+)="([^"]*)")re");
     std::string body = html.substr(rootStart);
     std::vector<UIElement*> stack;
     stack.push_back(&root);
@@ -363,7 +380,8 @@ inline void importFromHTML(const std::string& html, UIElement& root) {
             bool selfClose       = (om[3].str() == "/");
 
             if (tag == "div" || tag == "button" || tag == "span" ||
-                tag == "img" || tag == "input")
+                tag == "img" || tag == "input" || tag == "select" ||
+                tag == "progress")
             {
                 // Parse attributes
                 std::map<std::string, std::string> attrs;
@@ -373,7 +391,10 @@ inline void importFromHTML(const std::string& html, UIElement& root) {
                     attrs[(*it)[1].str()] = (*it)[2].str();
                 }
 
-                auto elem = createElement(tagToType(tag));
+                ElementType mapped = tagToType(tag);
+                if (attrs.count("data-myu-type"))
+                    mapped = nameToType(attrs["data-myu-type"]);
+                auto elem = createElement(mapped);
                 if (attrs.count("id")) elem->name = attrs["id"];
                 if (attrs.count("class")) elem->cssClass = attrs["class"];
 
@@ -406,7 +427,12 @@ inline void importFromHTML(const std::string& html, UIElement& root) {
                 if (!text.empty() && !stack.empty()) {
                     auto* cur = stack.back();
                     if (cur->type == ElementType::Label ||
-                        cur->type == ElementType::Button)
+                        cur->type == ElementType::Button ||
+                        cur->type == ElementType::Checkbox ||
+                        cur->type == ElementType::Toggle ||
+                        cur->type == ElementType::Slider ||
+                        cur->type == ElementType::Progress ||
+                        cur->type == ElementType::Dropdown)
                         cur->text = text;
                 }
             }

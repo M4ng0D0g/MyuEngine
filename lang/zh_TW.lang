@@ -1,0 +1,211 @@
+# MyuEngine 繁體中文語言檔
+# 格式: key=翻譯文字
+# 以 # 開頭的行為註解，空行會被忽略
+
+# === 主選單 ===
+File=檔案
+Settings=設定
+Help=說明
+Tools=工具
+Rescan Projects=重新掃描專案
+Quit=離開
+Reset Layout=重設版面
+
+# === 設定選單 ===
+Enable New Window (Viewports)=啟用新視窗 (Viewports)
+VSync=垂直同步
+Reduce FPS When Unfocused=失去焦點時降低 FPS
+Pause Render When Unfocused=失去焦點時暫停渲染
+Pause Render When Minimized=最小化時暫停渲染
+Reduce Heavy Panels When Idle=閒置時降低重度面板
+FPS Limit=FPS 上限
+Idle FPS=閒置 FPS
+Platform FPS=平台視窗 FPS
+Pause Platform When Minimized=平台視窗最小化時暫停
+Idle Delay (ms)=閒置延遲 (ms)
+0 = unlimited=0 = 不限制
+Editor Performance=編輯器效能
+
+# === 視窗設定 ===
+Viewport in Scene Tab=場景分頁顯示視窗
+Viewport in Board Tab=棋盤分頁顯示視窗
+Viewport in Preview Tab=預覽分頁顯示視窗
+Draw Board Grid=繪製棋盤格線
+Draw Board Labels=繪製棋盤標籤
+Draw Board Pieces=繪製棋子
+Draw Board Highlights=繪製棋盤高亮
+Draw Card Preview=繪製卡片預覽
+Viewport Grid=視窗格線
+Viewport Pieces=視窗物件
+Viewport Shadows=視窗陰影
+Viewport Scale=視窗縮放
+
+# === UI 設計器 ===
+UI Designer Performance=UI 設計器效能
+UI Canvas=UI 畫布
+UI Grid=UI 格線
+UI Elements=UI 元件
+UI Selection=UI 選取
+UI Overlay=UI 疊加資訊
+
+# === 安裝器 / 資料 ===
+Installer / Data=安裝器 / 資料
+Data Root=資料根目錄
+Data Root Override=資料根目錄覆寫
+Apply Data Root=套用資料根目錄
+Clear Override=清除覆寫
+Simulate Install=模擬安裝
+Install Dir=安裝目錄
+
+# === 通用 ===
+About=關於
+Usage Guide=使用說明
+Save UI Design=儲存 UI 設計
+Export HTML=匯出 HTML
+Close Project=關閉專案
+Language=語言
+Close=關閉
+Cancel=取消
+Open=開啟
+Delete=刪除
+Create=建立
+Refresh=重新整理
+Load=載入
+Copy=複製
+Clear=清除
+
+# === 專案面板 ===
+Projects=專案
+Root=根目錄
++ New Project=+ 新增專案
+Selected=已選取
+Template=樣板
+Version=版本
+Path=路徑
+Delete Project=刪除專案
+Yes, Delete=確認刪除
+
+# === 建立專案精靈 ===
+Create New Project=建立新專案
+Project Name=專案名稱
+Select Template=選擇樣板
+
+# === 記錄主控台 ===
+Log Console=記錄主控台
+Auto-scroll=自動捲動
+
+# === 工具面板 ===
+Voxel Modeler=體素模型
+Blockbench Import=Blockbench 匯入
+Resources=資源
+Events=事件
+Add Resource=新增資源
+Type=類型
+Name=名稱
+Texture=貼圖
+Model=模型
+Material=材質
+Audio=音訊
+Font=字型
+Elements=元素
+Textures=貼圖
+Resolution=解析度
+
+# === ECS ===
+New Entity=新實體
+Create Entity=建立實體
+
+# === 事件系統 ===
+Payload=內容
+Emit=送出事件
+Dispatch=派送
+
+# === 專案範本描述 ===
+2D game with sprites, tilemaps, physics, audio.=2D 遊戲：精靈、地圖、物理、音效。
+3D game with meshes, lighting, camera, physics.=3D 遊戲：模型、光源、相機、物理。
+Frontend web app (HTML/CSS/JS assets, UI).=前端網頁：HTML/CSS/JS 資產與 UI。
+Backend server application (API, DB).=後端伺服器：API 與資料庫。
+Combined frontend + backend project.=前後端合併專案。
+Native desktop application with GUI.=原生桌面應用與 GUI。
+Reusable library or shared module.=可重用的程式庫或模組。
+Blank project – create your own structure.=空白專案：自行建立結構。
+
+# === 專案語言 ===
+Project Language=專案語言
+C++ (Native)=C++ (原生)
+Web (HTML/JS)=Web (HTML/JS)
+Java=Java
+Python=Python
+
+# === 建置 / 執行 ===
+Build=建置
+Run=執行
+Build & Run=建置並執行
+Stop=停止
+Building...=建置中…
+Running...=執行中…
+Build succeeded=建置成功
+Build failed=建置失敗
+Process finished with code=程序結束，返回碼
+
+# === 流程圖 ===
+Flow Chart=流程圖
+Add Node=新增節點
+Start=開始
+End=結束
+Process=處理
+Decision=判斷
+Class=類別
+Function=函式
+Input/Output=輸入/輸出
+Loop=迴圈
+Generate Code=產生程式碼
+Generated Code=產生的程式碼
+Label=標籤
+Content=內容
+Condition=條件
+True Branch=是
+False Branch=否
+Yes=是
+No=否
+Connect=連接
+Delete Node=刪除節點
+Description=說明
+Connections=連接
+Node Properties=節點屬性
+Return Type=回傳類型
+Parameters=參數
+Members=成員
+Methods=方法
+Parent Class=父類別
+No selection=未選取
+Save Flow Chart=儲存流程圖
+Load Flow Chart=載入流程圖
+
+# === 使用說明面板 ===
+Quick Start=快速開始
+UI Designer=UI 設計器
+Tool Panels=工具面板
+Data & Maintenance=資料與維護
+help.quickstart.1=點選「+ 新增專案」建立專案，再用「開啟」進入編輯器。
+help.quickstart.2=建立時可選擇樣板（2D / 3D / Web / 桌面應用等）與程式語言。
+help.quickstart.3=設定裡可調啟多視窗、耗能限制與閒置反應。
+help.quickstart.4=翻譯檔放在 lang/ 目錄，格式為 key=翻譯文字。
+help.uid.1=在 Toolbox 拉入元件，用滑鼠拖動、縮放、編輯屬性。
+help.uid.2=錨點選元件，按 Delete 可刪除。
+help.uid.3=可匯出 HTML/CSS，使用「Switch to HTML/CSS」進行雙向編輯。
+help.game.1=場景、系統等分頁可直覺編輯設定。
+help.game.2=能透過設定加速額外化視窗避免耗能過高。
+help.flow.1=工具 → 流程圖，可新增節點（開始、處理、判斷、類別、函式、迴圈等）。
+help.flow.2=左鍵拖動節點，右鍵選單連接或刪除節點。
+help.flow.3=右側屬性面板可編輯節點內容、條件、成員方法等。
+help.flow.4=按「產生程式碼」可依專案語言產生 C++ / Java / Python / JS 程式碼。
+help.build.1=建置選單提供 Build (Ctrl+B)、Run (Ctrl+R)、Build & Run (Ctrl+Shift+B)。
+help.build.2=建置輸出會即時顯示在 Log Console，含錯誤高亮。
+help.build.3=支援 C++ (cmake)、Java (javac)、Python (py_compile)、Web 專案。
+help.tools.1=Voxel Modeler：體素切片編輯。
+help.tools.2=Blockbench 匯入：讀取 .bbmodel 元資料。
+help.tools.3=Resources / ECS / Events：資源維護、實體管理與事件簡明流程。
+help.data.1=可在設定中設定資料根目錄，以便搬移專案儲存路徑。
+help.data.2=Log Console 會跟隨編輯器輸出，方便追蹤問題。
+help.data.3=流程圖會自動儲存為 flowchart.myuflow，下次開啟專案時自動載入。

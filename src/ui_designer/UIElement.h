@@ -92,13 +92,20 @@ enum class ElementType {
     Label,
     Image,
     Input,
+    Checkbox,
+    Toggle,
+    Slider,
+    Progress,
+    Dropdown,
     Container,   // layout container (flex-like)
     kCount
 };
 
 inline const char* elementTypeName(ElementType t) {
     static const char* names[] = {
-        "Panel", "Button", "Label", "Image", "Input", "Container"
+        "Panel", "Button", "Label", "Image", "Input",
+        "Checkbox", "Toggle", "Slider", "Progress", "Dropdown",
+        "Container"
     };
     return names[static_cast<int>(t)];
 }
@@ -269,6 +276,36 @@ inline std::unique_ptr<UIElement> createElement(ElementType type, const std::str
             e->style.borderWidth = 1.0f;
             e->text = "";
             e->anchor.offsetMax = {180, 30};
+            break;
+        case ElementType::Checkbox:
+            e->style.bgColor = {0, 0, 0, 0};
+            e->style.borderWidth = 0;
+            e->text = "Checkbox";
+            e->anchor.offsetMax = {140, 24};
+            break;
+        case ElementType::Toggle:
+            e->style.bgColor = {0.2f, 0.6f, 0.3f, 1.0f};
+            e->style.borderRadius = 12.0f;
+            e->text = "Toggle";
+            e->anchor.offsetMax = {90, 28};
+            break;
+        case ElementType::Slider:
+            e->style.bgColor = {0.18f, 0.18f, 0.22f, 1.0f};
+            e->style.borderWidth = 1.0f;
+            e->text = "Slider";
+            e->anchor.offsetMax = {200, 28};
+            break;
+        case ElementType::Progress:
+            e->style.bgColor = {0.18f, 0.18f, 0.22f, 1.0f};
+            e->style.borderWidth = 1.0f;
+            e->text = "Progress";
+            e->anchor.offsetMax = {200, 22};
+            break;
+        case ElementType::Dropdown:
+            e->style.bgColor = {0.2f, 0.2f, 0.25f, 1.0f};
+            e->style.borderWidth = 1.0f;
+            e->text = "Dropdown";
+            e->anchor.offsetMax = {160, 30};
             break;
         case ElementType::Container:
             e->style.bgColor = {0.1f, 0.1f, 0.12f, 0.5f};

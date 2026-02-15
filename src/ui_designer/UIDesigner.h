@@ -136,6 +136,44 @@ inline void drawElementOnCanvas(ImDrawList* dl, const DesignerState& ds,
         }
     }
 
+    // Checkbox
+    if (e.type == ElementType::Checkbox) {
+        float box = 14.0f * ds.zoom;
+        ImVec2 cb0(p0.x + 4 * ds.zoom, p0.y + 4 * ds.zoom);
+        ImVec2 cb1(cb0.x + box, cb0.y + box);
+        dl->AddRect(cb0, cb1, IM_COL32(200, 200, 210, 220), 2.0f, 0, 1.0f);
+    }
+
+    // Toggle
+    if (e.type == ElementType::Toggle) {
+        float r = (p1.y - p0.y) * 0.4f;
+        ImVec2 c(p0.x + r + 6 * ds.zoom, (p0.y + p1.y) * 0.5f);
+        dl->AddCircleFilled(c, r, IM_COL32(255, 255, 255, 200));
+    }
+
+    // Slider
+    if (e.type == ElementType::Slider) {
+        float cy = (p0.y + p1.y) * 0.5f;
+        dl->AddLine(ImVec2(p0.x + 6 * ds.zoom, cy), ImVec2(p1.x - 6 * ds.zoom, cy),
+                    IM_COL32(180, 180, 190, 200), 2.0f * ds.zoom);
+        dl->AddCircleFilled(ImVec2(p0.x + (p1.x - p0.x) * 0.6f, cy),
+                            5.0f * ds.zoom, IM_COL32(230, 230, 240, 230));
+    }
+
+    // Progress
+    if (e.type == ElementType::Progress) {
+        float w = (p1.x - p0.x) * 0.6f;
+        dl->AddRectFilled(p0, ImVec2(p0.x + w, p1.y), IM_COL32(80, 170, 255, 200));
+    }
+
+    // Dropdown
+    if (e.type == ElementType::Dropdown) {
+        ImVec2 a(p1.x - 14 * ds.zoom, (p0.y + p1.y) * 0.5f - 3 * ds.zoom);
+        ImVec2 b(p1.x - 6 * ds.zoom, (p0.y + p1.y) * 0.5f - 3 * ds.zoom);
+        ImVec2 c(p1.x - 10 * ds.zoom, (p0.y + p1.y) * 0.5f + 3 * ds.zoom);
+        dl->AddTriangleFilled(a, b, c, IM_COL32(210, 210, 220, 220));
+    }
+
     // Image placeholder
     if (e.type == ElementType::Image && e.imagePath.empty()) {
         float cx = (p0.x + p1.x) * 0.5f, cy = (p0.y + p1.y) * 0.5f;
@@ -186,6 +224,11 @@ inline void drawToolbar(DesignerState& ds) {
         {ElementType::Label,     "Label"},
         {ElementType::Image,     "Image"},
         {ElementType::Input,     "Input"},
+        {ElementType::Checkbox,  "Checkbox"},
+        {ElementType::Toggle,    "Toggle"},
+        {ElementType::Slider,    "Slider"},
+        {ElementType::Progress,  "Progress"},
+        {ElementType::Dropdown,  "Dropdown"},
         {ElementType::Container, "Container"},
     };
 
@@ -196,7 +239,12 @@ inline void drawToolbar(DesignerState& ds) {
             // If selected is a leaf type, add to its parent instead
             if (parent->type == ElementType::Label ||
                 parent->type == ElementType::Input ||
-                parent->type == ElementType::Image) {
+                parent->type == ElementType::Image ||
+                parent->type == ElementType::Checkbox ||
+                parent->type == ElementType::Toggle ||
+                parent->type == ElementType::Slider ||
+                parent->type == ElementType::Progress ||
+                parent->type == ElementType::Dropdown) {
                 parent = parent->parent ? parent->parent : &ds.root;
             }
 
@@ -373,13 +421,12 @@ inline void drawCanvas(DesignerState& ds, bool allowHeavy = true) {
     if (canvasHovered) {
         // Zoom with scroll
         if (io.MouseWheel != 0) {
-            float oldZoom = ds.zoom;
+            ImVec2 before = screenToCanvas(ds, canvasPos, mousePos.x, mousePos.y);
             ds.zoom *= (io.MouseWheel > 0) ? 1.1f : 0.9f;
             ds.zoom = std::clamp(ds.zoom, 0.1f, 8.0f);
-            // Zoom toward mouse
-            float zf = ds.zoom / oldZoom;
-            ds.pan.x = mousePos.x / ds.zoom - (mousePos.x / oldZoom - ds.pan.x);
-            ds.pan.y = mousePos.y / ds.zoom - (mousePos.y / oldZoom - ds.pan.y);
+            ImVec2 after = screenToCanvas(ds, canvasPos, mousePos.x, mousePos.y);
+            ds.pan.x += (before.x - after.x);
+            ds.pan.y += (before.y - after.y);
         }
 
         // Pan with right mouse
@@ -461,6 +508,14 @@ inline void drawCanvas(DesignerState& ds, bool allowHeavy = true) {
                 ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
             else
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        }
+    }
+
+    if (ds.selected && ds.selected != &ds.root && !ds.selected->locked) {
+        bool canvasFocus = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+        if (canvasFocus && ImGui::IsKeyPressed(ImGuiKey_Delete) && !io.WantTextInput) {
+            auto owned = ds.selected->detach();
+            ds.selectElement(nullptr);
         }
     }
 
@@ -567,7 +622,9 @@ inline void drawProperties(DesignerState& ds) {
     // --- Content ---
     if (ImGui::CollapsingHeader("Content", ImGuiTreeNodeFlags_DefaultOpen)) {
         if (e.type == ElementType::Label || e.type == ElementType::Button ||
-            e.type == ElementType::Input) {
+            e.type == ElementType::Input || e.type == ElementType::Checkbox ||
+            e.type == ElementType::Toggle || e.type == ElementType::Slider ||
+            e.type == ElementType::Progress || e.type == ElementType::Dropdown) {
             if (ImGui::InputText("Text", ds.textBuf, sizeof(ds.textBuf)))
                 e.text = ds.textBuf;
         }

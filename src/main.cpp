@@ -7,6 +7,11 @@
 #ifndef SDL_MAIN_HANDLED
 #define SDL_MAIN_HANDLED
 #endif
+
+#ifdef _WIN32
+#define popen  _popen
+#define pclose _pclose
+#endif
 #include <SDL.h>
 
 #include <glad/gl.h>  // glad2: gl.h (not glad.h)

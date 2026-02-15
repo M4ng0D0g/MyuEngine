@@ -26,6 +26,9 @@ jobs:
       - name: Build (Release)
         run: cmake --build build --config Release
 
+      - name: Install NSIS
+        run: choco install nsis -y
+
       - name: Package (NSIS)
         # 注意：Windows 虛擬機通常預裝有 NSIS，若失敗可能需要額外安裝步驟
         working-directory: build

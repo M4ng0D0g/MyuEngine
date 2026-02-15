@@ -38,8 +38,17 @@
 #include <vector>
 
 #ifdef _WIN32
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
 #  include <windows.h>
 #  include <shlobj.h>
+#  ifdef min
+#    undef min
+#  endif
+#  ifdef max
+#    undef max
+#  endif
 #endif
 
 namespace fs = std::filesystem;
@@ -1122,14 +1131,14 @@ int main(int /*argc*/, char** /*argv*/) {
         bool appFocused = (focusedWindow != nullptr);
         if (!appFocused && pauseRenderWhenUnfocused) {
             int sleepMs = (idleFpsLimit > 0) ? (int)(1000.0 / idleFpsLimit) : 50;
-            SDL_Delay((Uint32)std::max(1, sleepMs));
+            SDL_Delay((Uint32)((sleepMs < 1) ? 1 : sleepMs));
             continue;
         }
 
         bool mainMinimized = (SDL_GetWindowFlags(window) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN)) != 0;
         if (mainMinimized && pauseRenderWhenMinimized) {
             int sleepMs = (idleFpsLimit > 0) ? (int)(1000.0 / idleFpsLimit) : 50;
-            SDL_Delay((Uint32)std::max(1, sleepMs));
+            SDL_Delay((Uint32)((sleepMs < 1) ? 1 : sleepMs));
             continue;
         }
 

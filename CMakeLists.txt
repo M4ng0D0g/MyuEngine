@@ -174,24 +174,24 @@ if(WIN32)
     set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\\\MyuEngine.exe")
     # Maintenance mode: detect previous install, offer Repair / Uninstall / Cancel
     set(CPACK_NSIS_EXTRA_PREINSTALL_COMMANDS "
-        ReadRegStr $0 HKCU 'Software\\\\MyuEngine' 'InstallDir'\n\
-        StrCmp $0 '' done_maint\n\
-        MessageBox MB_YESNOCANCEL|MB_ICONQUESTION 'MyuEngine is already installed at $0.$\\r$\\n$\\r$\\nYes = Repair / Reinstall$\\nNo = Uninstall$\\nCancel = Abort' IDYES do_repair IDNO do_uninstall\n\
-        Abort\n\
-      do_uninstall:\n\
-        ExecWait '\\\"$0\\\\uninstall.exe\\\" /S'\n\
-        Goto done_maint\n\
-      do_repair:\n\
-        StrCpy $INSTDIR $0\n\
-      done_maint:\n\
+        ReadRegStr $0 HKCU 'Software\\\\MyuEngine' 'InstallDir'
+        StrCmp $0 '' done_maint
+        MessageBox MB_YESNOCANCEL|MB_ICONQUESTION 'MyuEngine is already installed at $0.$\\r$\\n$\\r$\\nYes = Repair / Reinstall$\\nNo = Uninstall$\\nCancel = Abort' IDYES do_repair IDNO do_uninstall
+        Abort
+      do_uninstall:
+        ExecWait '\\\"$0\\\\uninstall.exe\\\" /S'
+        Goto done_maint
+      do_repair:
+        StrCpy $INSTDIR $0
+      done_maint:
     ")
-    set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS
-        "WriteRegStr HKCU 'Software\\\\MyuEngine' 'InstallDir' '$INSTDIR'"
-        "WriteRegStr HKCU 'Software\\\\MyuEngine' 'Version' '${PROJECT_VERSION}'"
-    )
-    set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
-        "DeleteRegKey HKCU 'Software\\\\MyuEngine'"
-    )
+    set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS "
+        WriteRegStr HKCU 'Software\\\\MyuEngine' 'InstallDir' '$INSTDIR'
+        WriteRegStr HKCU 'Software\\\\MyuEngine' 'Version' '${PROJECT_VERSION}'
+    ")
+    set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS "
+        DeleteRegKey HKCU 'Software\\\\MyuEngine'
+    ")
 else()
     set(CPACK_GENERATOR "TGZ")
 endif()

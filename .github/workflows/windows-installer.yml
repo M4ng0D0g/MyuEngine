@@ -30,9 +30,19 @@ jobs:
         run: choco install nsis -y
 
       - name: Package (NSIS)
-        # 注意：Windows 虛擬機通常預裝有 NSIS，若失敗可能需要額外安裝步驟
         working-directory: build
         run: cpack -G NSIS -C Release
+
+      - name: Show NSIS log on failure
+        if: failure()
+        working-directory: build
+        run: |
+          if (Test-Path _CPack_Packages/win64/NSIS/NSISOutput.log) {
+            Get-Content _CPack_Packages/win64/NSIS/NSISOutput.log
+          } else {
+            Write-Host 'NSISOutput.log not found'
+          }
+        shell: pwsh
 
       - name: Upload Installer
         uses: actions/upload-artifact@v4

@@ -161,7 +161,7 @@ if(WIN32)
     set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
     set(CPACK_NSIS_CREATE_ICONS       "CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MyuEngine.lnk' '$INSTDIR\\\\bin\\\\MyuEngine.exe'")
     set(CPACK_NSIS_DELETE_ICONS       "Delete '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\MyuEngine.lnk'")
-    set(CPACK_NSIS_MUI_FINISHPAGE_RUN "$INSTDIR\\bin\\MyuEngine.exe")
+    set(CPACK_NSIS_MUI_FINISHPAGE_RUN "$INSTDIR\\\\bin\\\\MyuEngine.exe")
     set(CPACK_NSIS_CONTACT            "chiayu.myu@icloud.com")
     set(CPACK_NSIS_URL_INFO_ABOUT     "https://myuengine.dev")
     set(CPACK_NSIS_MENU_LINKS
@@ -169,20 +169,20 @@ if(WIN32)
         "https://myuengine.dev/docs" "Documentation"
     )
     set(CPACK_NSIS_COMPONENT_INSTALL ON)
-    set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\MyuEngine.exe")
+    set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\\\MyuEngine.exe")
     set(CPACK_NSIS_EXTRA_PREINSTALL_COMMANDS
-        "ReadRegStr $0 HKCU 'Software\\MyuEngine' 'InstallDir'"
+        "ReadRegStr $0 HKCU 'Software\\\\MyuEngine' 'InstallDir'"
         "StrCmp $0 '' +5"
         "MessageBox MB_YESNO|MB_ICONQUESTION 'Previous installation detected at $0. Continue and overwrite?' IDYES +2"
         "Abort"
         "StrCpy $INSTDIR $0"
     )
     set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS
-        "WriteRegStr HKCU 'Software\\MyuEngine' 'InstallDir' '$INSTDIR'"
-        "WriteRegStr HKCU 'Software\\MyuEngine' 'Version' '${PROJECT_VERSION}'"
+        "WriteRegStr HKCU 'Software\\\\MyuEngine' 'InstallDir' '$INSTDIR'"
+        "WriteRegStr HKCU 'Software\\\\MyuEngine' 'Version' '${PROJECT_VERSION}'"
     )
     set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS
-        "DeleteRegKey HKCU 'Software\\MyuEngine'"
+        "DeleteRegKey HKCU 'Software\\\\MyuEngine'"
     )
 else()
     set(CPACK_GENERATOR "TGZ")

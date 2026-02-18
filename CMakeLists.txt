@@ -125,6 +125,10 @@ target_link_libraries(MyuEngine PRIVATE
     myudog::utils
 )
 
+target_include_directories(MyuEngine PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../MyuDoglibs-Cpp/external/json/single_include"
+)
+
 if(WIN32)
     target_link_libraries(MyuEngine PRIVATE SDL2::SDL2main)
 endif()
@@ -140,6 +144,8 @@ set_target_properties(MyuEngine PROPERTIES
 install(TARGETS MyuEngine RUNTIME DESTINATION bin COMPONENT Editor)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE.txt" DESTINATION . COMPONENT Editor)
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/lang/" DESTINATION lang COMPONENT Editor)
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/fonts/" DESTINATION fonts COMPONENT Editor
+    FILES_MATCHING PATTERN "*.ttf" PATTERN "*.otf")
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/extras/Tools/" DESTINATION tools COMPONENT Tools)
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/extras/Samples/" DESTINATION samples COMPONENT Samples)
 

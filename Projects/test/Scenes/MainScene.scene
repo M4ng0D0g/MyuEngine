@@ -1,0 +1,6 @@
+{
+  "name": "MainScene",
+  "type": "3D",
+  "camera": { "position": [0,2,5], "target": [0,0,0] },
+  "entities": []
+}

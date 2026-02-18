@@ -123,6 +123,16 @@ struct Style {
     float padding[4]  = {4, 4, 4, 4}; // top right bottom left
 };
 
+// ─── Breakpoint overrides ────────────────────────────────────────────────
+
+struct BreakpointOverride {
+    std::string name;
+    Anchor anchor;
+    Style  style;
+    bool   useAnchor = false;
+    bool   useStyle  = false;
+};
+
 // ─── UIElement ──────────────────────────────────────────────────────────────
 
 struct UIElement {
@@ -140,6 +150,9 @@ struct UIElement {
     // Visuals
     Style   style;
 
+    // Responsive overrides
+    std::vector<BreakpointOverride> overrides;
+
     // Content
     std::string text;         // for Label / Button
     std::string imagePath;    // for Image
@@ -154,22 +167,65 @@ struct UIElement {
 
     // ── Methods ──
 
-    Rect resolveRect(const Rect& parentRect) const {
+    Rect resolveRectWithAnchor(const Rect& parentRect, const Anchor& a) const {
         float px = parentRect.x, py = parentRect.y;
         float pw = parentRect.w, ph = parentRect.h;
 
-        float x0 = px + pw * anchor.min.x + anchor.offsetMin.x;
-        float y0 = py + ph * anchor.min.y + anchor.offsetMin.y;
-        float x1 = px + pw * anchor.max.x + anchor.offsetMax.x;
-        float y1 = py + ph * anchor.max.y + anchor.offsetMax.y;
+        float x0 = px + pw * a.min.x + a.offsetMin.x;
+        float y0 = py + ph * a.min.y + a.offsetMin.y;
+        float x1 = px + pw * a.max.x + a.offsetMax.x;
+        float y1 = py + ph * a.max.y + a.offsetMax.y;
 
         return {x0, y0, x1 - x0, y1 - y0};
     }
 
-    void layout(const Rect& parentRect) {
-        computedRect = resolveRect(parentRect);
+    Rect resolveRect(const Rect& parentRect) const {
+        return resolveRectWithAnchor(parentRect, anchor);
+    }
+
+    const BreakpointOverride* findOverride(const std::string& name) const {
+        for (auto& o : overrides)
+            if (o.name == name) return &o;
+        return nullptr;
+    }
+
+    BreakpointOverride* findOverride(const std::string& name) {
+        for (auto& o : overrides)
+            if (o.name == name) return &o;
+        return nullptr;
+    }
+
+    BreakpointOverride& findOrCreateOverride(const std::string& name) {
+        if (auto* o = findOverride(name)) return *o;
+        BreakpointOverride o;
+        o.name = name;
+        o.anchor = anchor;
+        o.style = style;
+        overrides.push_back(o);
+        return overrides.back();
+    }
+
+    const Anchor& getAnchorForBreakpoint(const std::string* bp) const {
+        if (bp && !bp->empty()) {
+            if (auto* o = findOverride(*bp); o && o->useAnchor)
+                return o->anchor;
+        }
+        return anchor;
+    }
+
+    const Style& getStyleForBreakpoint(const std::string* bp) const {
+        if (bp && !bp->empty()) {
+            if (auto* o = findOverride(*bp); o && o->useStyle)
+                return o->style;
+        }
+        return style;
+    }
+
+    void layout(const Rect& parentRect, const std::string* bp = nullptr) {
+        const Anchor& a = getAnchorForBreakpoint(bp);
+        computedRect = resolveRectWithAnchor(parentRect, a);
         for (auto& child : children)
-            child->layout(computedRect);
+            child->layout(computedRect, bp);
     }
 
     UIElement* hitTest(float px, float py) {

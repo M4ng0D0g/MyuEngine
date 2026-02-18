@@ -23,7 +23,7 @@ Idle FPS=閒置 FPS
 Platform FPS=平台視窗 FPS
 Pause Platform When Minimized=平台視窗最小化時暫停
 Idle Delay (ms)=閒置延遲 (ms)
-0 = unlimited=0 = 不限制
+0_unlimited=0 = 不限制
 Editor Performance=編輯器效能
 
 # === 視窗設定 ===

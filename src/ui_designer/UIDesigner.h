@@ -27,6 +27,12 @@ struct DesignerPerf {
     bool drawOverlay   = true;
 };
 
+struct BreakpointPreset {
+    std::string name;
+    int width = 800;
+    int height = 600;
+};
+
 struct DesignerState {
     // Root element (virtual canvas root)
     UIElement root;
@@ -38,6 +44,11 @@ struct DesignerState {
     bool  showGrid = true;
     int   gridSize = 20;
     bool  snapToGrid = true;
+
+    // Responsive presets
+    std::vector<BreakpointPreset> breakpoints;
+    int activeBreakpoint = -1;
+    bool editBreakpointOverrides = false;
 
     // Selection
     UIElement* selected   = nullptr;
@@ -71,6 +82,10 @@ struct DesignerState {
         root.type = ElementType::Container;
         root.anchor.offsetMin = {0, 0};
         root.anchor.offsetMax = {canvasW, canvasH};
+
+        breakpoints.push_back({"Desktop", 1280, 720});
+        breakpoints.push_back({"Tablet", 1024, 768});
+        breakpoints.push_back({"Mobile", 390, 844});
     }
 
     void selectElement(UIElement* e) {
@@ -81,6 +96,27 @@ struct DesignerState {
             std::strncpy(cssBuf,  e->cssClass.c_str(), sizeof(cssBuf) - 1);
             std::strncpy(imgBuf,  e->imagePath.c_str(), sizeof(imgBuf) - 1);
         }
+    }
+
+    const BreakpointPreset* getActiveBreakpoint() const {
+        if (activeBreakpoint < 0 || activeBreakpoint >= static_cast<int>(breakpoints.size()))
+            return nullptr;
+        return &breakpoints[activeBreakpoint];
+    }
+
+    std::string getActiveBreakpointName() const {
+        auto* bp = getActiveBreakpoint();
+        return bp ? bp->name : std::string();
+    }
+
+    float getActiveCanvasW() const {
+        if (auto* bp = getActiveBreakpoint()) return static_cast<float>(bp->width);
+        return canvasW;
+    }
+
+    float getActiveCanvasH() const {
+        if (auto* bp = getActiveBreakpoint()) return static_cast<float>(bp->height);
+        return canvasH;
     }
 };
 
@@ -104,35 +140,61 @@ inline ImU32 vec4ToImCol(const Vec4& c) {
         static_cast<int>(c.w * 255));
 }
 
+inline Anchor& getEditableAnchor(DesignerState& ds, UIElement& e) {
+    if (ds.activeBreakpoint >= 0 && ds.editBreakpointOverrides) {
+        std::string bp = ds.getActiveBreakpointName();
+        if (!bp.empty()) {
+            auto& o = e.findOrCreateOverride(bp);
+            o.useAnchor = true;
+            return o.anchor;
+        }
+    }
+    return e.anchor;
+}
+
+inline Style& getEditableStyle(DesignerState& ds, UIElement& e) {
+    if (ds.activeBreakpoint >= 0 && ds.editBreakpointOverrides) {
+        std::string bp = ds.getActiveBreakpointName();
+        if (!bp.empty()) {
+            auto& o = e.findOrCreateOverride(bp);
+            o.useStyle = true;
+            return o.style;
+        }
+    }
+    return e.style;
+}
+
 inline void drawElementOnCanvas(ImDrawList* dl, const DesignerState& ds,
                                  const ImVec2& origin, const UIElement& e,
                                  const UIElement* selected,
-                                 bool drawSelection)
+                                 bool drawSelection,
+                                 const std::string* bpName)
 {
     if (!e.visible) return;
 
     auto& r = e.computedRect;
+    const Style& style = e.getStyleForBreakpoint(bpName);
     ImVec2 p0 = canvasToScreen(ds, origin, r.x, r.y);
     ImVec2 p1 = canvasToScreen(ds, origin, r.x + r.w, r.y + r.h);
 
-    float rounding = e.style.borderRadius * ds.zoom;
+    float rounding = style.borderRadius * ds.zoom;
 
     // Background
-    dl->AddRectFilled(p0, p1, vec4ToImCol(e.style.bgColor), rounding);
+    dl->AddRectFilled(p0, p1, vec4ToImCol(style.bgColor), rounding);
 
     // Border
-    if (e.style.borderWidth > 0) {
-        dl->AddRect(p0, p1, vec4ToImCol(e.style.borderColor),
-                    rounding, 0, e.style.borderWidth * ds.zoom);
+    if (style.borderWidth > 0) {
+        dl->AddRect(p0, p1, vec4ToImCol(style.borderColor),
+                    rounding, 0, style.borderWidth * ds.zoom);
     }
 
     // Text
     if (!e.text.empty()) {
-        float fs = e.style.fontSize * ds.zoom;
+        float fs = style.fontSize * ds.zoom;
         if (fs >= 6.0f) {
-            ImVec2 textPos(p0.x + e.style.padding[3] * ds.zoom,
-                           p0.y + e.style.padding[0] * ds.zoom);
-            dl->AddText(nullptr, fs, textPos, vec4ToImCol(e.style.fgColor), e.text.c_str());
+            ImVec2 textPos(p0.x + style.padding[3] * ds.zoom,
+                           p0.y + style.padding[0] * ds.zoom);
+            dl->AddText(nullptr, fs, textPos, vec4ToImCol(style.fgColor), e.text.c_str());
         }
     }
 
@@ -183,7 +245,7 @@ inline void drawElementOnCanvas(ImDrawList* dl, const DesignerState& ds,
     // Type label for Input
     if (e.type == ElementType::Input) {
         std::string ph = e.text.empty() ? "Input..." : e.text;
-        float fs = e.style.fontSize * ds.zoom * 0.9f;
+        float fs = style.fontSize * ds.zoom * 0.9f;
         if (fs >= 5) {
             dl->AddText(nullptr, fs,
                 ImVec2(p0.x + 4*ds.zoom, p0.y + 4*ds.zoom),
@@ -203,7 +265,7 @@ inline void drawElementOnCanvas(ImDrawList* dl, const DesignerState& ds,
 
     // Children
     for (auto& child : e.children)
-        drawElementOnCanvas(dl, ds, origin, *child, selected, drawSelection);
+        drawElementOnCanvas(dl, ds, origin, *child, selected, drawSelection, bpName);
 }
 
 // ─── Toolbar (Left Panel) ──────────────────────────────────────────────────
@@ -383,9 +445,13 @@ inline void drawCanvas(DesignerState& ds, bool allowHeavy = true) {
         ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y),
         IM_COL32(30, 30, 35, 255));
 
+    float canvasW = ds.getActiveCanvasW();
+    float canvasH = ds.getActiveCanvasH();
+    std::string bpName = ds.getActiveBreakpointName();
+
     // Canvas rectangle
     ImVec2 cP0 = canvasToScreen(ds, canvasPos, 0, 0);
-    ImVec2 cP1 = canvasToScreen(ds, canvasPos, ds.canvasW, ds.canvasH);
+    ImVec2 cP1 = canvasToScreen(ds, canvasPos, canvasW, canvasH);
     dl->AddRectFilled(cP0, cP1, IM_COL32(22, 33, 62, 255));
     dl->AddRect(cP0, cP1, IM_COL32(60, 80, 120, 255));
 
@@ -393,25 +459,27 @@ inline void drawCanvas(DesignerState& ds, bool allowHeavy = true) {
     if (ds.showGrid && ds.perf.drawGrid && ds.zoom >= 0.3f) {
         float gs = ds.gridSize * ds.zoom;
         ImU32 gc = IM_COL32(255, 255, 255, static_cast<int>(20 * std::min(ds.zoom, 1.0f)));
-        for (float x = 0; x <= ds.canvasW; x += ds.gridSize) {
+        for (float x = 0; x <= canvasW; x += ds.gridSize) {
             ImVec2 a = canvasToScreen(ds, canvasPos, x, 0);
-            ImVec2 b = canvasToScreen(ds, canvasPos, x, ds.canvasH);
+            ImVec2 b = canvasToScreen(ds, canvasPos, x, canvasH);
             dl->AddLine(a, b, gc);
         }
-        for (float y = 0; y <= ds.canvasH; y += ds.gridSize) {
+        for (float y = 0; y <= canvasH; y += ds.gridSize) {
             ImVec2 a = canvasToScreen(ds, canvasPos, 0, y);
-            ImVec2 b = canvasToScreen(ds, canvasPos, ds.canvasW, y);
+            ImVec2 b = canvasToScreen(ds, canvasPos, canvasW, y);
             dl->AddLine(a, b, gc);
         }
     }
 
     // Layout elements
-    Rect rootRect = {0, 0, ds.canvasW, ds.canvasH};
-    ds.root.layout(rootRect);
+    ds.root.anchor.offsetMax = {canvasW, canvasH};
+    Rect rootRect = {0, 0, canvasW, canvasH};
+    ds.root.layout(rootRect, bpName.empty() ? nullptr : &bpName);
 
     // Draw elements
     if (ds.perf.drawElements)
-        drawElementOnCanvas(dl, ds, canvasPos, ds.root, ds.selected, ds.perf.drawSelection);
+        drawElementOnCanvas(dl, ds, canvasPos, ds.root, ds.selected,
+                            ds.perf.drawSelection, bpName.empty() ? nullptr : &bpName);
 
     // ── Mouse interaction ──
     ImGuiIO& io = ImGui::GetIO();
@@ -456,10 +524,11 @@ inline void drawCanvas(DesignerState& ds, bool allowHeavy = true) {
                     }
                     ds.dragTarget = ds.selected;
                     ds.dragStart = {canvasMouse.x, canvasMouse.y};
-                    ds.dragElemStart = {ds.selected->anchor.offsetMin.x,
-                                        ds.selected->anchor.offsetMin.y};
-                    ds.dragElemMaxStart = {ds.selected->anchor.offsetMax.x,
-                                           ds.selected->anchor.offsetMax.y};
+                    Anchor& dragAnchor = getEditableAnchor(ds, *ds.selected);
+                    ds.dragElemStart = {dragAnchor.offsetMin.x,
+                                        dragAnchor.offsetMin.y};
+                    ds.dragElemMaxStart = {dragAnchor.offsetMax.x,
+                                           dragAnchor.offsetMax.y};
                 }
             } else {
                 ds.selectElement(nullptr);
@@ -479,18 +548,20 @@ inline void drawCanvas(DesignerState& ds, bool allowHeavy = true) {
             if (ds.dragOp == DragOp::Move) {
                 float w = ds.dragElemMaxStart.x - ds.dragElemStart.x;
                 float h = ds.dragElemMaxStart.y - ds.dragElemStart.y;
-                ds.dragTarget->anchor.offsetMin.x = ds.dragElemStart.x + dx;
-                ds.dragTarget->anchor.offsetMin.y = ds.dragElemStart.y + dy;
-                ds.dragTarget->anchor.offsetMax.x = ds.dragTarget->anchor.offsetMin.x + w;
-                ds.dragTarget->anchor.offsetMax.y = ds.dragTarget->anchor.offsetMin.y + h;
+                Anchor& dragAnchor = getEditableAnchor(ds, *ds.dragTarget);
+                dragAnchor.offsetMin.x = ds.dragElemStart.x + dx;
+                dragAnchor.offsetMin.y = ds.dragElemStart.y + dy;
+                dragAnchor.offsetMax.x = dragAnchor.offsetMin.x + w;
+                dragAnchor.offsetMax.y = dragAnchor.offsetMin.y + h;
             } else if (ds.dragOp == DragOp::ResizeBR) {
-                ds.dragTarget->anchor.offsetMax.x = ds.dragElemMaxStart.x + dx;
-                ds.dragTarget->anchor.offsetMax.y = ds.dragElemMaxStart.y + dy;
+                Anchor& dragAnchor = getEditableAnchor(ds, *ds.dragTarget);
+                dragAnchor.offsetMax.x = ds.dragElemMaxStart.x + dx;
+                dragAnchor.offsetMax.y = ds.dragElemMaxStart.y + dy;
                 // Ensure min size
-                if (ds.dragTarget->anchor.offsetMax.x - ds.dragTarget->anchor.offsetMin.x < 10)
-                    ds.dragTarget->anchor.offsetMax.x = ds.dragTarget->anchor.offsetMin.x + 10;
-                if (ds.dragTarget->anchor.offsetMax.y - ds.dragTarget->anchor.offsetMin.y < 10)
-                    ds.dragTarget->anchor.offsetMax.y = ds.dragTarget->anchor.offsetMin.y + 10;
+                if (dragAnchor.offsetMax.x - dragAnchor.offsetMin.x < 10)
+                    dragAnchor.offsetMax.x = dragAnchor.offsetMin.x + 10;
+                if (dragAnchor.offsetMax.y - dragAnchor.offsetMin.y < 10)
+                    dragAnchor.offsetMax.y = dragAnchor.offsetMin.y + 10;
             }
         }
 
@@ -549,9 +620,10 @@ inline void drawAnchorPresetGrid(DesignerState& ds) {
         if (i % 4 != 0) ImGui::SameLine();
         ImGui::PushID(i);
         if (ImGui::Button(presetLabels[i], ImVec2(32, 24))) {
-            float w = ds.selected->anchor.offsetMax.x - ds.selected->anchor.offsetMin.x;
-            float h = ds.selected->anchor.offsetMax.y - ds.selected->anchor.offsetMin.y;
-            applyAnchorPreset(ds.selected->anchor, static_cast<AnchorPreset>(i), w, h);
+            Anchor& a = getEditableAnchor(ds, *ds.selected);
+            float w = a.offsetMax.x - a.offsetMin.x;
+            float h = a.offsetMax.y - a.offsetMin.y;
+            applyAnchorPreset(a, static_cast<AnchorPreset>(i), w, h);
         }
         ImGui::PopID();
     }
@@ -571,6 +643,35 @@ inline void drawProperties(DesignerState& ds) {
         ImGui::Text("Canvas Settings");
         ImGui::DragFloat("Width", &ds.canvasW, 1, 100, 4096);
         ImGui::DragFloat("Height", &ds.canvasH, 1, 100, 4096);
+
+        ImGui::Separator();
+        ImGui::Text("Breakpoints");
+        const char* activeLabel = (ds.activeBreakpoint < 0) ? "Default" : ds.breakpoints[ds.activeBreakpoint].name.c_str();
+        if (ImGui::BeginCombo("Active", activeLabel)) {
+            bool isDefault = (ds.activeBreakpoint < 0);
+            if (ImGui::Selectable("Default", isDefault)) ds.activeBreakpoint = -1;
+            for (int i = 0; i < static_cast<int>(ds.breakpoints.size()); ++i) {
+                bool selected = (ds.activeBreakpoint == i);
+                if (ImGui::Selectable(ds.breakpoints[i].name.c_str(), selected))
+                    ds.activeBreakpoint = i;
+            }
+            ImGui::EndCombo();
+        }
+
+        if (ds.activeBreakpoint >= 0) {
+            auto& bp = ds.breakpoints[ds.activeBreakpoint];
+            static int lastBp = -2;
+            static char bpNameBuf[64] = {};
+            if (lastBp != ds.activeBreakpoint) {
+                std::strncpy(bpNameBuf, bp.name.c_str(), sizeof(bpNameBuf) - 1);
+                bpNameBuf[sizeof(bpNameBuf) - 1] = '\0';
+                lastBp = ds.activeBreakpoint;
+            }
+            if (ImGui::InputText("Name", bpNameBuf, sizeof(bpNameBuf)))
+                bp.name = bpNameBuf;
+            ImGui::DragInt("Width", &bp.width, 1, 100, 4096);
+            ImGui::DragInt("Height", &bp.height, 1, 100, 4096);
+        }
         ImGui::End();
         return;
     }
@@ -590,16 +691,35 @@ inline void drawProperties(DesignerState& ds) {
         ImGui::Checkbox("Locked", &e.locked);
     }
 
+    // --- Responsive ---
+    if (ImGui::CollapsingHeader("Responsive", ImGuiTreeNodeFlags_DefaultOpen)) {
+        const char* activeLabel = (ds.activeBreakpoint < 0) ? "Default" : ds.breakpoints[ds.activeBreakpoint].name.c_str();
+        if (ImGui::BeginCombo("Active Breakpoint", activeLabel)) {
+            bool isDefault = (ds.activeBreakpoint < 0);
+            if (ImGui::Selectable("Default", isDefault)) ds.activeBreakpoint = -1;
+            for (int i = 0; i < static_cast<int>(ds.breakpoints.size()); ++i) {
+                bool selected = (ds.activeBreakpoint == i);
+                if (ImGui::Selectable(ds.breakpoints[i].name.c_str(), selected))
+                    ds.activeBreakpoint = i;
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::Checkbox("Edit Overrides", &ds.editBreakpointOverrides);
+        if (ds.activeBreakpoint < 0)
+            ImGui::TextDisabled("Select a breakpoint to edit overrides.");
+    }
+
     // --- Anchor / Layout ---
     if (ImGui::CollapsingHeader("Anchor & Layout", ImGuiTreeNodeFlags_DefaultOpen)) {
         drawAnchorPresetGrid(ds);
         ImGui::Separator();
 
-        ImGui::DragFloat2("Anchor Min", &e.anchor.min.x, 0.01f, 0.0f, 1.0f);
-        ImGui::DragFloat2("Anchor Max", &e.anchor.max.x, 0.01f, 0.0f, 1.0f);
-        ImGui::DragFloat2("Offset Min", &e.anchor.offsetMin.x, 1.0f);
-        ImGui::DragFloat2("Offset Max", &e.anchor.offsetMax.x, 1.0f);
-        ImGui::DragFloat2("Pivot",      &e.anchor.pivot.x, 0.01f, 0.0f, 1.0f);
+        Anchor& a = getEditableAnchor(ds, e);
+        ImGui::DragFloat2("Anchor Min", &a.min.x, 0.01f, 0.0f, 1.0f);
+        ImGui::DragFloat2("Anchor Max", &a.max.x, 0.01f, 0.0f, 1.0f);
+        ImGui::DragFloat2("Offset Min", &a.offsetMin.x, 1.0f);
+        ImGui::DragFloat2("Offset Max", &a.offsetMax.x, 1.0f);
+        ImGui::DragFloat2("Pivot",      &a.pivot.x, 0.01f, 0.0f, 1.0f);
         ImGui::DragFloat("Rotation",    &e.rotation, 0.5f, -360, 360);
 
         // Computed rect (read-only)
@@ -609,14 +729,15 @@ inline void drawProperties(DesignerState& ds) {
 
     // --- Style ---
     if (ImGui::CollapsingHeader("Style", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::ColorEdit4("Background", &e.style.bgColor.x);
-        ImGui::ColorEdit4("Text Color", &e.style.fgColor.x);
-        ImGui::ColorEdit4("Border Color", &e.style.borderColor.x);
-        ImGui::DragFloat("Border Width", &e.style.borderWidth, 0.1f, 0, 10);
-        ImGui::DragFloat("Border Radius", &e.style.borderRadius, 0.5f, 0, 100);
-        ImGui::DragFloat("Font Size", &e.style.fontSize, 0.5f, 4, 120);
-        ImGui::SliderFloat("Opacity", &e.style.opacity, 0.0f, 1.0f);
-        ImGui::DragFloat4("Padding", e.style.padding, 0.5f, 0, 100);
+        Style& s = getEditableStyle(ds, e);
+        ImGui::ColorEdit4("Background", &s.bgColor.x);
+        ImGui::ColorEdit4("Text Color", &s.fgColor.x);
+        ImGui::ColorEdit4("Border Color", &s.borderColor.x);
+        ImGui::DragFloat("Border Width", &s.borderWidth, 0.1f, 0, 10);
+        ImGui::DragFloat("Border Radius", &s.borderRadius, 0.5f, 0, 100);
+        ImGui::DragFloat("Font Size", &s.fontSize, 0.5f, 4, 120);
+        ImGui::SliderFloat("Opacity", &s.opacity, 0.0f, 1.0f);
+        ImGui::DragFloat4("Padding", s.padding, 0.5f, 0, 100);
     }
 
     // --- Content ---
@@ -701,6 +822,37 @@ inline void saveDesign(DesignerState& ds, const std::filesystem::path& path) {
     std::string json = exportToJSON(ds.root);
     std::ofstream f(path);
     if (f) f << json;
+}
+
+inline void saveBreakpoints(const DesignerState& ds, const std::filesystem::path& path) {
+    std::ofstream f(path);
+    if (!f) return;
+    for (auto& bp : ds.breakpoints) {
+        f << bp.name << "|" << bp.width << "|" << bp.height << "\n";
+    }
+}
+
+inline void loadBreakpoints(DesignerState& ds, const std::filesystem::path& path) {
+    std::ifstream f(path);
+    if (!f) return;
+    ds.breakpoints.clear();
+    std::string line;
+    while (std::getline(f, line)) {
+        size_t p1 = line.find('|');
+        size_t p2 = line.find('|', p1 == std::string::npos ? p1 : p1 + 1);
+        if (p1 == std::string::npos || p2 == std::string::npos) continue;
+        BreakpointPreset bp;
+        bp.name = line.substr(0, p1);
+        bp.width = std::atoi(line.substr(p1 + 1, p2 - p1 - 1).c_str());
+        bp.height = std::atoi(line.substr(p2 + 1).c_str());
+        if (bp.width > 0 && bp.height > 0)
+            ds.breakpoints.push_back(bp);
+    }
+    if (ds.breakpoints.empty()) {
+        ds.breakpoints.push_back({"Desktop", 1280, 720});
+        ds.breakpoints.push_back({"Tablet", 1024, 768});
+        ds.breakpoints.push_back({"Mobile", 390, 844});
+    }
 }
 
 inline void loadDesignHTML(DesignerState& ds, const std::filesystem::path& path) {

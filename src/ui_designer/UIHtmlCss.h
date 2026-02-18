@@ -468,6 +468,34 @@ inline void exportElementJSON(const UIElement& e, std::ostringstream& out, int i
     out << pad << "    \"fontSize\": " << e.style.fontSize << ",\n";
     out << pad << "    \"opacity\": " << e.style.opacity << "\n";
     out << pad << "  },\n";
+    out << pad << "  \"overrides\": [\n";
+    for (size_t i = 0; i < e.overrides.size(); ++i) {
+        const auto& o = e.overrides[i];
+        out << pad << "    {\n";
+        out << pad << "      \"name\": \"" << o.name << "\",\n";
+        out << pad << "      \"useAnchor\": " << (o.useAnchor ? "true" : "false") << ",\n";
+        out << pad << "      \"useStyle\": " << (o.useStyle ? "true" : "false") << ",\n";
+        out << pad << "      \"anchor\": {\n";
+        out << pad << "        \"min\": [" << o.anchor.min.x << "," << o.anchor.min.y << "],\n";
+        out << pad << "        \"max\": [" << o.anchor.max.x << "," << o.anchor.max.y << "],\n";
+        out << pad << "        \"offsetMin\": [" << o.anchor.offsetMin.x << "," << o.anchor.offsetMin.y << "],\n";
+        out << pad << "        \"offsetMax\": [" << o.anchor.offsetMax.x << "," << o.anchor.offsetMax.y << "],\n";
+        out << pad << "        \"pivot\": [" << o.anchor.pivot.x << "," << o.anchor.pivot.y << "]\n";
+        out << pad << "      },\n";
+        out << pad << "      \"style\": {\n";
+        out << pad << "        \"bgColor\": \"" << colorToCSS(o.style.bgColor) << "\",\n";
+        out << pad << "        \"fgColor\": \"" << colorToCSS(o.style.fgColor) << "\",\n";
+        out << pad << "        \"borderColor\": \"" << colorToCSS(o.style.borderColor) << "\",\n";
+        out << pad << "        \"borderWidth\": " << o.style.borderWidth << ",\n";
+        out << pad << "        \"borderRadius\": " << o.style.borderRadius << ",\n";
+        out << pad << "        \"fontSize\": " << o.style.fontSize << ",\n";
+        out << pad << "        \"opacity\": " << o.style.opacity << "\n";
+        out << pad << "      }\n";
+        out << pad << "    }";
+        if (i + 1 < e.overrides.size()) out << ",";
+        out << "\n";
+    }
+    out << pad << "  ],\n";
     out << pad << "  \"children\": [\n";
     for (size_t i = 0; i < e.children.size(); ++i) {
         exportElementJSON(*e.children[i], out, indent + 2);

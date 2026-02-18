@@ -175,6 +175,9 @@ struct GameObject {
 
     // Built-in sprite shortcut
     std::string spritePath;
+    // 3D model/material
+    std::string modelPath;
+    std::string materialName;
     Color       tint = {1, 1, 1, 1};
     float       width = 1, height = 1;  // world units
 

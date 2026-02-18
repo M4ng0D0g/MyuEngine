@@ -1,0 +1,6 @@
+name=testw
+template=3D Game
+language=cpp
+version=0.1.0
+engine=MyuEngine
+created_ms=1771333318337

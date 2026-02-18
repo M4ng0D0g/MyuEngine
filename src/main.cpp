@@ -25,6 +25,7 @@
 #include <myudog/utils/Time.hpp>
 
 #include "ui_designer/UIDesigner.h"
+#include "ui_designer/UIExporters.h"
 #include "editor/GameEditor.h"
 #include "editor/VoxelEditor.h"
 #include "engine/ECS.h"
@@ -105,34 +106,161 @@ static UiLang gUiLang = UiLang::ZhTW;
 // Map: English key → translated string
 static std::unordered_map<std::string, std::string> gLangMap;
 
-// Resolve the lang/ directory relative to the executable
-static fs::path getLangDir() {
-    // Try a few common locations:
-    //   1) <exe_dir>/../../lang        (running from build/bin/)
-    //   2) <exe_dir>/../lang           (installed layout)
-    //   3) <exe_dir>/lang
-    //   4) ./lang
+// Resolve a resource directory relative to the executable
+static fs::path getResDir(const char* dirName) {
     auto tryDir = [](const fs::path& p) -> fs::path {
         std::error_code ec;
         if (fs::is_directory(p, ec)) return p;
         return {};
     };
-
-    // SDL provides the executable base path
     char* basePath = SDL_GetBasePath();
     fs::path base = basePath ? fs::path(basePath) : fs::current_path();
     if (basePath) SDL_free(basePath);
-
     for (auto& candidate : {
-            base / ".." / ".." / "lang",
-            base / ".." / "lang",
-            base / "lang",
-            fs::path("lang")
+            base / ".." / ".." / dirName,
+            base / ".." / dirName,
+            base / dirName,
+            fs::path(dirName)
          }) {
         auto d = tryDir(candidate);
         if (!d.empty()) return fs::canonical(d);
     }
-    return fs::path("lang"); // fallback
+    return fs::path(dirName);
+}
+
+static fs::path getUserDataDir();
+
+static fs::path getRestrictedRoot() {
+    return fs::path("/home/chiayu/projects");
+}
+
+static fs::path normalizePath(const fs::path& p) {
+    std::error_code ec;
+    fs::path norm = fs::weakly_canonical(p, ec);
+    if (ec) return p.lexically_normal();
+    return norm;
+}
+
+static bool isUnderRestrictedRoot(const fs::path& p) {
+    fs::path root = normalizePath(getRestrictedRoot());
+    fs::path target = normalizePath(p);
+    std::string rootStr = root.generic_string();
+    std::string targetStr = target.generic_string();
+    if (rootStr.empty()) return true;
+    if (targetStr == rootStr) return true;
+    if (rootStr.back() != '/') rootStr.push_back('/');
+    return targetStr.rfind(rootStr, 0) == 0;
+}
+
+static fs::path getTemplateLibraryDir() {
+    fs::path base = getUserDataDir();
+    fs::path dir = base / "MyuEngine" / "templates";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    return dir;
+}
+
+static bool copyDirectoryRecursive(const fs::path& src, const fs::path& dst, std::string& err) {
+    std::error_code ec;
+    if (!fs::exists(src, ec) || !fs::is_directory(src, ec)) {
+        err = "Source directory not found";
+        return false;
+    }
+    fs::create_directories(dst, ec);
+    if (ec) {
+        err = "Failed to create destination directory";
+        return false;
+    }
+    for (auto& entry : fs::directory_iterator(src, ec)) {
+        if (ec) {
+            err = "Failed to read source directory";
+            return false;
+        }
+        const fs::path& p = entry.path();
+        fs::path target = dst / p.filename();
+        if (entry.is_directory()) {
+            if (!copyDirectoryRecursive(p, target, err)) return false;
+        } else if (entry.is_regular_file()) {
+            fs::copy_file(p, target, fs::copy_options::overwrite_existing, ec);
+            if (ec) {
+                err = "Failed to copy file";
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static std::vector<fs::path> listTemplateDirs() {
+    std::vector<fs::path> dirs;
+    std::error_code ec;
+    fs::path base = getTemplateLibraryDir();
+    for (auto& entry : fs::directory_iterator(base, ec)) {
+        if (entry.is_directory())
+            dirs.push_back(entry.path());
+    }
+    std::sort(dirs.begin(), dirs.end());
+    return dirs;
+}
+
+static const char* resourceTypeToString(myu::engine::ResourceType t) {
+    switch (t) {
+        case myu::engine::ResourceType::Texture:  return "Texture";
+        case myu::engine::ResourceType::Model:    return "Model";
+        case myu::engine::ResourceType::Material: return "Material";
+        case myu::engine::ResourceType::Audio:    return "Audio";
+        case myu::engine::ResourceType::Font:     return "Font";
+        default:                                  return "Unknown";
+    }
+}
+
+static myu::engine::ResourceType resourceTypeFromString(const std::string& s) {
+    if (s == "Texture")  return myu::engine::ResourceType::Texture;
+    if (s == "Model")    return myu::engine::ResourceType::Model;
+    if (s == "Material") return myu::engine::ResourceType::Material;
+    if (s == "Audio")    return myu::engine::ResourceType::Audio;
+    if (s == "Font")     return myu::engine::ResourceType::Font;
+    return myu::engine::ResourceType::Unknown;
+}
+
+static void saveResourcesToFile(const myu::engine::ResourceManager& rm, const fs::path& path) {
+    std::ofstream f(path);
+    if (!f) return;
+    for (auto& e : rm.entries()) {
+        f << resourceTypeToString(e.type) << "|" << e.name << "|" << e.path << "|" << e.meta << "\n";
+    }
+}
+
+static void loadResourcesFromFile(myu::engine::ResourceManager& rm, const fs::path& path) {
+    std::ifstream f(path);
+    if (!f) return;
+    std::string line;
+    while (std::getline(f, line)) {
+        size_t p1 = line.find('|');
+        size_t p2 = line.find('|', p1 == std::string::npos ? p1 : p1 + 1);
+        size_t p3 = line.find('|', p2 == std::string::npos ? p2 : p2 + 1);
+        if (p1 == std::string::npos || p2 == std::string::npos) continue;
+        std::string typeStr = line.substr(0, p1);
+        std::string name = line.substr(p1 + 1, p2 - p1 - 1);
+        std::string pathStr = (p3 == std::string::npos) ? line.substr(p2 + 1)
+                                                         : line.substr(p2 + 1, p3 - p2 - 1);
+        std::string meta = (p3 == std::string::npos) ? "" : line.substr(p3 + 1);
+        if (!name.empty()) rm.add(resourceTypeFromString(typeStr), name, pathStr, meta);
+    }
+}
+
+static fs::path getFontsDir() { return getResDir("fonts"); }
+
+// Resolve the lang/ directory relative to the executable
+static fs::path getLangDir() {
+    return getResDir("lang");
+}
+
+static std::string trimStr(const std::string& s) {
+    auto b = s.find_first_not_of(" \t\r");
+    if (b == std::string::npos) return "";
+    auto e = s.find_last_not_of(" \t\r");
+    return s.substr(b, e - b + 1);
 }
 
 static bool loadLangFile(const fs::path& path) {
@@ -141,12 +269,17 @@ static bool loadLangFile(const fs::path& path) {
     gLangMap.clear();
     std::string line;
     while (std::getline(f, line)) {
+        // Remove BOM if present
+        if (line.size() >= 3 && line[0] == '\xEF' && line[1] == '\xBB' && line[2] == '\xBF')
+            line = line.substr(3);
+        line = trimStr(line);
         if (line.empty() || line[0] == '#') continue; // skip comments
         auto eq = line.find('=');
         if (eq == std::string::npos) continue;
-        std::string key   = line.substr(0, eq);
-        std::string value = line.substr(eq + 1);
-        gLangMap[key] = value;
+        std::string key   = trimStr(line.substr(0, eq));
+        std::string value = trimStr(line.substr(eq + 1));
+        if (!key.empty())
+            gLangMap[key] = value;
     }
     return true;
 }
@@ -933,13 +1066,19 @@ static fs::path getExecutableDir() {
 }
 
 static fs::path getPortableDataDir() {
-    if (const char* e = std::getenv("MYUENGINE_HOME"); e && *e)
-        return fs::path(e);
+    if (const char* e = std::getenv("MYUENGINE_HOME"); e && *e) {
+        fs::path p(e);
+        if (isUnderRestrictedRoot(p)) return p;
+        return {};
+    }
     fs::path marker = getExecutableDir() / "myuengine_home.txt";
     std::error_code ec;
     if (fs::exists(marker, ec)) {
         std::string line = readFirstLine(marker);
-        if (!line.empty()) return fs::path(line);
+        if (!line.empty()) {
+            fs::path p(line);
+            if (isUnderRestrictedRoot(p)) return p;
+        }
     }
     return {};
 }
@@ -1000,30 +1139,19 @@ static bool simulateInstall(const fs::path& targetDir, std::string& err) {
 }
 
 static fs::path getUserDataDir() {
-    if (auto portable = getPortableDataDir(); !portable.empty())
-        return portable;
-#ifdef _WIN32
-    PWSTR wpath = nullptr;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &wpath))) {
-        fs::path p(wpath);
-        CoTaskMemFree(wpath);
-        return p;
-    }
-    if (const char* e = std::getenv("LOCALAPPDATA")) return fs::path(e);
-    if (const char* e = std::getenv("USERPROFILE"))  return fs::path(e);
-    return fs::current_path();
-#else
-    if (const char* e = std::getenv("XDG_DATA_HOME"); e && *e) return fs::path(e);
-    if (const char* e = std::getenv("HOME"); e && *e)          return fs::path(e) / ".local" / "share";
-    return fs::current_path();
-#endif
+    // Always return restricted root: /home/chiayu/projects
+    // Do not check HOME or system AppData
+    return getRestrictedRoot();
 }
 
 static fs::path getProjectsRoot() {
-    fs::path root = getUserDataDir() / "MyuEngine" / "Projects";
+    // Projects are stored under ~/.local/share/MyuEngine/Projects 
+    // only for legacy support (migration path)
+    // New projects MUST be created in /home/chiayu/projects/MyuEngine/Projects
+    fs::path restricted = getRestrictedRoot() / "MyuEngine" / "Projects";
     std::error_code ec;
-    fs::create_directories(root, ec);
-    return root;
+    fs::create_directories(restricted, ec);
+    return restricted;
 }
 
 // ============================================================================
@@ -1074,35 +1202,183 @@ static void writeFile(const fs::path& path, const std::string& content) {
 // ============================================================================
 static void scaffoldGame2D(const fs::path& dir) {
     std::error_code ec;
+    fs::create_directories(dir / "src", ec);
     fs::create_directories(dir / "Assets" / "Sprites", ec);
-    fs::create_directories(dir / "Assets" / "Tilemaps", ec);
     fs::create_directories(dir / "Assets" / "Audio", ec);
     fs::create_directories(dir / "Assets" / "Fonts", ec);
     fs::create_directories(dir / "Scenes", ec);
-    fs::create_directories(dir / "Scripts", ec);
     fs::create_directories(dir / "Config", ec);
 
-    writeFile(dir / "Scripts" / "main.cpp",
-        "// Auto-generated by MyuEngine\n"
-        "#include <iostream>\n\n"
+    // --- CMakeLists.txt ---------------------------------------------------
+    writeFile(dir / "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.20)\n"
+        "project(MyGame LANGUAGES CXX)\n"
+        "set(CMAKE_CXX_STANDARD 20)\n\n"
+        "include(FetchContent)\n\n"
+        "# --- SDL2 (static) ---\n"
+        "set(SDL2_DISABLE_INSTALL ON CACHE BOOL \"\" FORCE)\n"
+        "set(SDL_SHARED OFF CACHE BOOL \"\" FORCE)\n"
+        "set(SDL_STATIC ON  CACHE BOOL \"\" FORCE)\n"
+        "set(SDL_TEST   OFF CACHE BOOL \"\" FORCE)\n"
+        "FetchContent_Declare(SDL2\n"
+        "    GIT_REPOSITORY https://github.com/libsdl-org/SDL.git\n"
+        "    GIT_TAG        release-2.30.7\n"
+        "    GIT_SHALLOW    TRUE\n"
+        ")\n"
+        "FetchContent_MakeAvailable(SDL2)\n\n"
+        "# --- Game executable ---\n"
+        "file(GLOB_RECURSE GAME_SOURCES \"src/*.cpp\")\n"
+        "add_executable(${PROJECT_NAME} ${GAME_SOURCES})\n"
+        "target_include_directories(${PROJECT_NAME} PRIVATE include)\n"
+        "target_link_libraries(${PROJECT_NAME} PRIVATE SDL2-static SDL2main)\n");
+
+    // --- Runtime headers (copy from MyuDoglibs) --------------------------
+    fs::path runtimeSrc;
+    {
+        // Locate MyuDoglibs-Cpp relative to the engine source tree
+        char* basePath = SDL_GetBasePath();
+        fs::path base = basePath ? fs::path(basePath) : fs::current_path();
+        if (basePath) SDL_free(basePath);
+        // Try several relative paths
+        for (auto& cand : {
+                base / ".." / ".." / ".." / "MyuDoglibs-Cpp",
+                base / ".." / ".." / "MyuDoglibs-Cpp",
+                base / ".." / "MyuDoglibs-Cpp",
+                fs::path("MyuDoglibs-Cpp")
+             }) {
+            if (fs::is_directory(cand / "libs" / "game" / "include", ec)) {
+                runtimeSrc = fs::canonical(cand / "libs" / "game" / "include");
+                break;
+            }
+        }
+    }
+    fs::path incDir = dir / "include" / "myudog" / "game" / "runtime";
+    fs::create_directories(incDir, ec);
+    if (!runtimeSrc.empty()) {
+        auto src = runtimeSrc / "myudog" / "game" / "runtime";
+        if (fs::is_directory(src, ec)) {
+            fs::copy(src, incDir, fs::copy_options::overwrite_existing | fs::copy_options::recursive, ec);
+        }
+    }
+    // Always ensure minimal headers exist even if copy failed
+    if (!fs::exists(incDir / "Board.hpp", ec)) {
+        writeFile(incDir / "Board.hpp",
+            "#pragma once\n"
+            "#include <vector>\n#include <string>\n#include <stdexcept>\n\n"
+            "namespace myudog::game::runtime {\n\n"
+            "template <typename T = int>\n"
+            "class Board {\npublic:\n"
+            "    Board() = default;\n"
+            "    Board(int rows, int cols, T def = T{}) : rows_(rows), cols_(cols),\n"
+            "        grid_(rows, std::vector<T>(cols, def)) {}\n"
+            "    int rows() const { return rows_; }\n"
+            "    int cols() const { return cols_; }\n"
+            "    bool inBounds(int r, int c) const { return r>=0&&r<rows_&&c>=0&&c<cols_; }\n"
+            "    T get(int r, int c) const { return inBounds(r,c)?grid_[r][c]:T{}; }\n"
+            "    void set(int r, int c, T v) { if(inBounds(r,c)) grid_[r][c]=v; }\n"
+            "    void fill(T v) { for(auto& row:grid_) std::fill(row.begin(),row.end(),v); }\n"
+            "    void resize(int r, int c, T def=T{}) { rows_=r; cols_=c; grid_.assign(r,std::vector<T>(c,def)); }\n"
+            "    const std::vector<std::vector<T>>& data() const { return grid_; }\n"
+            "private:\n"
+            "    int rows_=0, cols_=0;\n"
+            "    std::vector<std::vector<T>> grid_;\n"
+            "};\n\n"
+            "} // namespace myudog::game::runtime\n");
+    }
+    if (!fs::exists(incDir / "GameRuntime.hpp", ec)) {
+        writeFile(incDir / "GameRuntime.hpp",
+            "#pragma once\n"
+            "#ifndef SDL_MAIN_HANDLED\n#define SDL_MAIN_HANDLED\n#endif\n"
+            "#include <SDL.h>\n#include <chrono>\n#include <cstdio>\n\n"
+            "namespace myudog::game::runtime {\n\n"
+            "class GameApp {\npublic:\n"
+            "    virtual ~GameApp() = default;\n"
+            "    SDL_Window* window() const { return window_; }\n"
+            "    SDL_Renderer* renderer() const { return renderer_; }\n"
+            "    int width() const { return w_; }\n"
+            "    int height() const { return h_; }\n"
+            "    bool running() const { return run_; }\n"
+            "    void quit() { run_=false; }\n"
+            "    virtual void init() {}\n"
+            "    virtual void update(float dt) {}\n"
+            "    virtual void render() {}\n"
+            "    virtual void shutdown() {}\n"
+            "    virtual void onEvent(const SDL_Event&) {}\n"
+            "    void clearScreen(int r=30,int g=30,int b=40) {\n"
+            "        SDL_SetRenderDrawColor(renderer_,r,g,b,255); SDL_RenderClear(renderer_); }\n"
+            "    void drawRect(int x,int y,int w,int h,int r,int g,int b,int a=255) {\n"
+            "        SDL_SetRenderDrawColor(renderer_,r,g,b,a); SDL_Rect rc={x,y,w,h}; SDL_RenderFillRect(renderer_,&rc); }\n"
+            "    void drawOutline(int x,int y,int w,int h,int r,int g,int b,int a=255) {\n"
+            "        SDL_SetRenderDrawColor(renderer_,r,g,b,a); SDL_Rect rc={x,y,w,h}; SDL_RenderDrawRect(renderer_,&rc); }\n"
+            "    void present() { SDL_RenderPresent(renderer_); }\n"
+            "private:\n"
+            "    friend int runGameImpl(GameApp&,const char*,int,int);\n"
+            "    SDL_Window* window_=nullptr; SDL_Renderer* renderer_=nullptr;\n"
+            "    int w_=800,h_=600; bool run_=true;\n"
+            "};\n\n"
+            "inline int runGameImpl(GameApp& app, const char* title, int w, int h) {\n"
+            "    if(SDL_Init(SDL_INIT_VIDEO)!=0){std::fprintf(stderr,\"SDL_Init: %s\\n\",SDL_GetError());return 1;}\n"
+            "    app.w_=w; app.h_=h;\n"
+            "    app.window_=SDL_CreateWindow(title,SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED,w,h,SDL_WINDOW_SHOWN|SDL_WINDOW_RESIZABLE);\n"
+            "    if(!app.window_){SDL_Quit();return 1;}\n"
+            "    app.renderer_=SDL_CreateRenderer(app.window_,-1,SDL_RENDERER_ACCELERATED|SDL_RENDERER_PRESENTVSYNC);\n"
+            "    if(!app.renderer_){SDL_DestroyWindow(app.window_);SDL_Quit();return 1;}\n"
+            "    app.run_=true; app.init();\n"
+            "    using Clock=std::chrono::high_resolution_clock; auto prev=Clock::now();\n"
+            "    while(app.run_){\n"
+            "        SDL_Event ev; while(SDL_PollEvent(&ev)){if(ev.type==SDL_QUIT)app.run_=false; app.onEvent(ev);}\n"
+            "        auto now=Clock::now(); float dt=std::chrono::duration<float>(now-prev).count(); prev=now;\n"
+            "        if(dt>0.1f)dt=0.1f; app.update(dt); app.render();\n"
+            "    }\n"
+            "    app.shutdown(); SDL_DestroyRenderer(app.renderer_); SDL_DestroyWindow(app.window_); SDL_Quit(); return 0;\n"
+            "}\n\n"
+            "template<typename T>\n"
+            "int runGame(const char* title=\"MyGame\", int w=800, int h=600) { T app; return runGameImpl(app,title,w,h); }\n\n"
+            "} // namespace myudog::game::runtime\n");
+    }
+
+    // --- Default main.cpp — blank game -----------------------------------
+    writeFile(dir / "src" / "main.cpp",
+        "// Auto-generated by MyuEngine — 2D Game\n"
+        "#include <myudog/game/runtime/GameRuntime.hpp>\n"
+        "#include <myudog/game/runtime/Board.hpp>\n\n"
+        "using namespace myudog::game::runtime;\n\n"
+        "class MyGame : public GameApp {\n"
+        "public:\n"
+        "    void init() override {\n"
+        "        // Your initialization code here\n"
+        "    }\n\n"
+        "    void update(float dt) override {\n"
+        "        // Update game logic\n"
+        "    }\n\n"
+        "    void render() override {\n"
+        "        clearScreen();\n"
+        "        // Draw your game here\n"
+        "        present();\n"
+        "    }\n\n"
+        "    void onEvent(const SDL_Event& ev) override {\n"
+        "        // Handle input\n"
+        "    }\n"
+        "};\n\n"
         "int main() {\n"
-        "    std::cout << \"Hello 2D Game!\\n\";\n"
-        "    return 0;\n"
+        "    return runGame<MyGame>(\"My 2D Game\", 800, 600);\n"
         "}\n");
 
-    writeFile(dir / "Scenes" / "MainScene.scene",
-        "{\n"
-        "  \"name\": \"MainScene\",\n"
-        "  \"type\": \"2D\",\n"
-        "  \"entities\": []\n"
-        "}\n");
-
+    // --- Config ---
     writeFile(dir / "Config" / "game.cfg",
         "# Game configuration\n"
         "window_width=800\n"
         "window_height=600\n"
         "title=My 2D Game\n"
         "target_fps=60\n");
+
+    // --- Scene file ---
+    writeFile(dir / "Scenes" / "MainScene.scene",
+        "{\n"
+        "  \"name\": \"MainScene\",\n"
+        "  \"type\": \"2D\",\n"
+        "  \"objects\": []\n"
+        "}\n");
 }
 
 static void scaffoldGame3D(const fs::path& dir) {
@@ -1443,25 +1719,78 @@ static bool deleteProject(const fs::path& path, std::string& err) {
 // ============================================================================
 static void setupDarkTheme() {
     ImGuiStyle& s = ImGui::GetStyle();
-    s.WindowRounding   = 4.0f;
-    s.FrameRounding    = 3.0f;
-    s.GrabRounding     = 3.0f;
-    s.ScrollbarRounding= 3.0f;
-    s.WindowBorderSize = 1.0f;
+    s.WindowRounding    = 6.0f;
+    s.ChildRounding     = 4.0f;
+    s.FrameRounding     = 4.0f;
+    s.PopupRounding     = 4.0f;
+    s.GrabRounding      = 4.0f;
+    s.TabRounding       = 4.0f;
+    s.ScrollbarRounding = 6.0f;
+    s.WindowBorderSize  = 1.0f;
+    s.FrameBorderSize   = 0.0f;
+    s.PopupBorderSize   = 1.0f;
+    s.WindowPadding     = ImVec2(8, 8);
+    s.FramePadding      = ImVec2(6, 4);
+    s.ItemSpacing       = ImVec2(8, 5);
+    s.ItemInnerSpacing  = ImVec2(6, 4);
+    s.IndentSpacing     = 20.0f;
+    s.ScrollbarSize     = 14.0f;
+    s.GrabMinSize       = 12.0f;
+    s.SeparatorTextBorderSize = 2.0f;
     ImGui::StyleColorsDark();
     auto& c = s.Colors;
+    // Background
     c[ImGuiCol_WindowBg]          = ImVec4(0.10f, 0.10f, 0.12f, 1.0f);
+    c[ImGuiCol_ChildBg]           = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    c[ImGuiCol_PopupBg]           = ImVec4(0.10f, 0.10f, 0.14f, 0.96f);
+    // Title bar
     c[ImGuiCol_TitleBg]           = ImVec4(0.08f, 0.08f, 0.10f, 1.0f);
-    c[ImGuiCol_TitleBgActive]     = ImVec4(0.14f, 0.14f, 0.18f, 1.0f);
-    c[ImGuiCol_MenuBarBg]         = ImVec4(0.12f, 0.12f, 0.14f, 1.0f);
-    c[ImGuiCol_Header]            = ImVec4(0.20f, 0.22f, 0.28f, 1.0f);
-    c[ImGuiCol_HeaderHovered]     = ImVec4(0.28f, 0.32f, 0.42f, 1.0f);
-    c[ImGuiCol_Button]            = ImVec4(0.22f, 0.24f, 0.32f, 1.0f);
-    c[ImGuiCol_ButtonHovered]     = ImVec4(0.30f, 0.34f, 0.44f, 1.0f);
-    c[ImGuiCol_FrameBg]           = ImVec4(0.14f, 0.14f, 0.18f, 1.0f);
-    c[ImGuiCol_Tab]               = ImVec4(0.14f, 0.14f, 0.20f, 1.0f);
-    c[ImGuiCol_TabHovered]        = ImVec4(0.24f, 0.28f, 0.40f, 1.0f);
-    c[ImGuiCol_TabSelected]       = ImVec4(0.20f, 0.24f, 0.36f, 1.0f);
+    c[ImGuiCol_TitleBgActive]     = ImVec4(0.12f, 0.14f, 0.20f, 1.0f);
+    c[ImGuiCol_TitleBgCollapsed]  = ImVec4(0.06f, 0.06f, 0.08f, 0.75f);
+    // Menu bar
+    c[ImGuiCol_MenuBarBg]         = ImVec4(0.11f, 0.11f, 0.14f, 1.0f);
+    // Headers / Selectables
+    c[ImGuiCol_Header]            = ImVec4(0.18f, 0.22f, 0.32f, 1.0f);
+    c[ImGuiCol_HeaderHovered]     = ImVec4(0.26f, 0.32f, 0.48f, 1.0f);
+    c[ImGuiCol_HeaderActive]      = ImVec4(0.30f, 0.36f, 0.54f, 1.0f);
+    // Buttons — accent blue
+    c[ImGuiCol_Button]            = ImVec4(0.20f, 0.24f, 0.36f, 1.0f);
+    c[ImGuiCol_ButtonHovered]     = ImVec4(0.28f, 0.34f, 0.50f, 1.0f);
+    c[ImGuiCol_ButtonActive]      = ImVec4(0.34f, 0.40f, 0.58f, 1.0f);
+    // Frames (inputs, combos)
+    c[ImGuiCol_FrameBg]           = ImVec4(0.13f, 0.13f, 0.17f, 1.0f);
+    c[ImGuiCol_FrameBgHovered]    = ImVec4(0.18f, 0.18f, 0.24f, 1.0f);
+    c[ImGuiCol_FrameBgActive]     = ImVec4(0.22f, 0.22f, 0.30f, 1.0f);
+    // Tabs — active tab accent
+    c[ImGuiCol_Tab]               = ImVec4(0.12f, 0.12f, 0.18f, 1.0f);
+    c[ImGuiCol_TabHovered]        = ImVec4(0.26f, 0.30f, 0.46f, 1.0f);
+    c[ImGuiCol_TabSelected]       = ImVec4(0.20f, 0.26f, 0.42f, 1.0f);
+    c[ImGuiCol_TabDimmed]         = ImVec4(0.08f, 0.08f, 0.12f, 1.0f);
+    c[ImGuiCol_TabDimmedSelected] = ImVec4(0.14f, 0.16f, 0.26f, 1.0f);
+    // Separator / Border
+    c[ImGuiCol_Separator]         = ImVec4(0.22f, 0.22f, 0.28f, 1.0f);
+    c[ImGuiCol_SeparatorHovered]  = ImVec4(0.36f, 0.44f, 0.66f, 1.0f);
+    c[ImGuiCol_SeparatorActive]   = ImVec4(0.40f, 0.50f, 0.74f, 1.0f);
+    c[ImGuiCol_Border]            = ImVec4(0.18f, 0.18f, 0.24f, 0.60f);
+    // Resize grip
+    c[ImGuiCol_ResizeGrip]        = ImVec4(0.24f, 0.30f, 0.48f, 0.30f);
+    c[ImGuiCol_ResizeGripHovered] = ImVec4(0.30f, 0.38f, 0.60f, 0.60f);
+    c[ImGuiCol_ResizeGripActive]  = ImVec4(0.36f, 0.44f, 0.70f, 0.90f);
+    // Scrollbar
+    c[ImGuiCol_ScrollbarBg]       = ImVec4(0.06f, 0.06f, 0.08f, 0.60f);
+    c[ImGuiCol_ScrollbarGrab]     = ImVec4(0.22f, 0.22f, 0.30f, 1.0f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.30f, 0.30f, 0.40f, 1.0f);
+    c[ImGuiCol_ScrollbarGrabActive]  = ImVec4(0.36f, 0.36f, 0.48f, 1.0f);
+    // Docking
+    c[ImGuiCol_DockingPreview]    = ImVec4(0.26f, 0.40f, 0.70f, 0.70f);
+    c[ImGuiCol_DockingEmptyBg]    = ImVec4(0.08f, 0.08f, 0.10f, 1.0f);
+    // Check mark / slider
+    c[ImGuiCol_CheckMark]         = ImVec4(0.44f, 0.58f, 0.90f, 1.0f);
+    c[ImGuiCol_SliderGrab]        = ImVec4(0.36f, 0.46f, 0.72f, 1.0f);
+    c[ImGuiCol_SliderGrabActive]  = ImVec4(0.44f, 0.54f, 0.82f, 1.0f);
+    // Text
+    c[ImGuiCol_Text]              = ImVec4(0.92f, 0.92f, 0.94f, 1.0f);
+    c[ImGuiCol_TextDisabled]      = ImVec4(0.48f, 0.48f, 0.52f, 1.0f);
 }
 
 static void drawLogPanel(LogBuffer& log) {
@@ -1703,11 +2032,24 @@ static void drawProjectsPanel(
     for (auto& p : projects) {
         bool sel = selected && *selected == p;
         std::string tmplTag = readProjectMeta(p, "template");
+        std::string langTag = readProjectMeta(p, "language");
         std::string display = p.filename().string();
         if (!tmplTag.empty())
             display += "  (" + tmplTag + ")";
-        if (ImGui::Selectable(display.c_str(), sel))
+        if (ImGui::Selectable(display.c_str(), sel, ImGuiSelectableFlags_AllowDoubleClick)) {
             selected = p;
+            // Double-click to open project directly
+            if (ImGui::IsMouseDoubleClicked(0)) {
+                openRequested = true;
+            }
+        }
+        // Hover tooltip with project details
+        if (ImGui::IsItemHovered() && ImGui::BeginTooltip()) {
+            ImGui::Text("%s: %s", tr("Template"), tmplTag.empty() ? "-" : tmplTag.c_str());
+            ImGui::Text("%s: %s", tr("Language"), langTag.empty() ? "-" : langTag.c_str());
+            ImGui::TextDisabled("%s", p.string().c_str());
+            ImGui::EndTooltip();
+        }
     }
     ImGui::EndChild();
 
@@ -1786,7 +2128,7 @@ int main(int /*argc*/, char** /*argv*/) {
         "MyuEngine v0.1.0",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         1280, 720,
-        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_MAXIMIZED);
 
     if (!window) {
         std::fprintf(stderr, "Window creation failed: %s\n", SDL_GetError());
@@ -1822,7 +2164,8 @@ int main(int /*argc*/, char** /*argv*/) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+    // Viewports disabled by default for single-window experience
+    // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
     io.IniFilename = "myuengine_imgui.ini"; // persists layout
 
     setupDarkTheme();
@@ -1836,6 +2179,27 @@ int main(int /*argc*/, char** /*argv*/) {
 
     ImGui_ImplSDL2_InitForOpenGL(window, gl);
     ImGui_ImplOpenGL3_Init("#version 330");
+
+    // --- Load fonts (must be before first NewFrame) ---
+    {
+        fs::path fontsDir = getFontsDir();
+        fs::path cjkFont  = fontsDir / "NotoSansTC-Regular.ttf";
+        std::error_code ec;
+        if (fs::exists(cjkFont, ec)) {
+            // Primary font: Noto Sans TC with full CJK range
+            io.Fonts->AddFontFromFileTTF(
+                cjkFont.string().c_str(), 18.0f, nullptr,
+                io.Fonts->GetGlyphRangesChineseFull());
+            std::fprintf(stderr, "[font] Loaded CJK font: %s\n",
+                         cjkFont.string().c_str());
+        } else {
+            // Fallback: default ImGui font (ASCII only)
+            io.Fonts->AddFontDefault();
+            std::fprintf(stderr, "[font] CJK font not found: %s — using default\n",
+                         cjkFont.string().c_str());
+        }
+        io.Fonts->Build();
+    }
 
     // --- State ---
     fs::path dataRoot = getUserDataDir();
@@ -1860,11 +2224,11 @@ int main(int /*argc*/, char** /*argv*/) {
 
     // Voxel editor
     myu::editor::VoxelEditorState voxelEditor;
-    bool showVoxelEditor = true;
-    bool showBlockbench = true;
-    bool showResources = true;
-    bool showEcs = true;
-    bool showEvents = true;
+    bool showVoxelEditor = false;  // Hidden when editor is open
+    bool showBlockbench = false;   // Hidden when editor is open
+    bool showResources = false;    // Hidden when editor is open
+    bool showEcs = false;          // Hidden when editor is open
+    bool showEvents = false;       // Hidden when editor is open
 
     std::vector<myu::engine::Event> eventLog;
     eventBus.subscribe([&](const myu::engine::Event& e) {
@@ -1878,9 +2242,11 @@ int main(int /*argc*/, char** /*argv*/) {
     bool showFlowChart = false;
     ProjectLang currentProjectLang = ProjectLang::Cpp;
 
+    bool showTemplateLibrary = false;
+
     enum class EditorMode { None, UIDesigner, GameEditor };
     EditorMode editorMode = EditorMode::None;
-    bool editorDockNeedsInit = false;
+    bool editorDockNeedsInit = false;  // (kept for compatibility)
 
     // Load default language from .lang file
     loadLanguage(gUiLang);
@@ -1891,7 +2257,7 @@ int main(int /*argc*/, char** /*argv*/) {
     bool showAbout = false;
     bool showHelp = true;
     bool running   = true;
-    bool enableViewports = true;
+    bool enableViewports = false;  // Single-window by default
     bool enableVsync = true;
     bool reduceFpsWhenUnfocused = true;
     bool pauseRenderWhenUnfocused = true;
@@ -1914,9 +2280,10 @@ int main(int /*argc*/, char** /*argv*/) {
     char simInstallBuf[512] = {};
     std::strncpy(dataRootBuf, dataRoot.string().c_str(), sizeof(dataRootBuf) - 1);
 
-    bool mainDockNeedsInit = false;
-    if (io.IniFilename && !fs::exists(io.IniFilename))
-        mainDockNeedsInit = true;
+    // Always rebuild dock layout on startup to match the current mode.
+    // The layout is re-built each time we switch modes anyway, so there is
+    // no benefit in restoring the stale INI layout from a previous session.
+    bool mainDockNeedsInit = true;
 
     // --- Main loop ---
     while (running) {
@@ -1929,6 +2296,79 @@ int main(int /*argc*/, char** /*argv*/) {
                 ev.window.event == SDL_WINDOWEVENT_CLOSE &&
                 ev.window.windowID == SDL_GetWindowID(window))
                 running = false;
+
+            // Keyboard shortcuts
+            if (ev.type == SDL_KEYDOWN && editorMode != EditorMode::None) {
+                bool ctrl  = (ev.key.keysym.mod & KMOD_CTRL) != 0;
+                bool shift = (ev.key.keysym.mod & KMOD_SHIFT) != 0;
+                if (ctrl && !shift && ev.key.keysym.sym == SDLK_s) {
+                    // Ctrl+S: Save
+                    if (editorMode == EditorMode::UIDesigner && selectedProject) {
+                        auto savePath = *selectedProject / "ui_layout.json";
+                        myu::ui::saveDesign(uiDesigner, savePath);
+                        auto bpPath = *selectedProject / "ui_breakpoints.txt";
+                        myu::ui::saveBreakpoints(uiDesigner, bpPath);
+                        gLog.info("Saved UI design: " + savePath.string());
+                    }
+                    if (editorMode == EditorMode::GameEditor && selectedProject) {
+                        auto fcPath = *selectedProject / "flowchart.myuflow";
+                        flowChart.save(fcPath);
+                        auto flowPath = *selectedProject / "flow.mye";
+                        myu::editor::saveFlow(gameEditor, flowPath);
+                        gLog.info("Saved project data");
+                    }
+                }
+                if (ctrl && !shift && ev.key.keysym.sym == SDLK_b && selectedProject) {
+                    // Ctrl+B: Build
+                    if (!gBuild.running) {
+                        std::string projDir = selectedProject->string();
+                        std::string lang = readProjectMeta(*selectedProject, "language");
+                        std::string cmd;
+                        if (lang == "cpp") cmd = "cmake -S . -B build && cmake --build build 2>&1";
+                        else if (lang == "java") cmd = "javac -d build $(find . -name '*.java') 2>&1";
+                        else if (lang == "python") cmd = "python -m py_compile $(find . -name '*.py') 2>&1";
+                        else cmd = "cmake -S . -B build && cmake --build build 2>&1";
+                        gLog.info(std::string(tr("Building...")) + " [" + cmd + "]");
+                        gBuild.start(cmd, projDir);
+                    }
+                }
+                if (ctrl && !shift && ev.key.keysym.sym == SDLK_r && selectedProject) {
+                    // Ctrl+R: Run
+                    if (!gBuild.running) {
+                        std::string projDir = selectedProject->string();
+                        std::string lang = readProjectMeta(*selectedProject, "language");
+                        std::string projName = readProjectMeta(*selectedProject, "name");
+                        std::string cmd;
+                        if (lang == "cpp") {
+                            std::string exe = projName.empty() ? "MyGame" : projName;
+                            cmd = "./build/" + exe + " 2>&1";
+                        }
+                        else if (lang == "java") cmd = "java -cp build Main 2>&1";
+                        else if (lang == "python") cmd = "python3 src/main.py 2>&1 || python3 main.py 2>&1";
+                        else cmd = "./build/main 2>&1";
+                        gLog.info(std::string(tr("Running...")) + " [" + cmd + "]");
+                        gBuild.start(cmd, projDir);
+                    }
+                }
+                if (ctrl && shift && ev.key.keysym.sym == SDLK_b && selectedProject) {
+                    // Ctrl+Shift+B: Build & Run
+                    if (!gBuild.running) {
+                        std::string projDir = selectedProject->string();
+                        std::string lang = readProjectMeta(*selectedProject, "language");
+                        std::string projName = readProjectMeta(*selectedProject, "name");
+                        std::string cmd;
+                        if (lang == "cpp") {
+                            std::string exe = projName.empty() ? "MyGame" : projName;
+                            cmd = "cmake -S . -B build && cmake --build build && ./build/" + exe + " 2>&1";
+                        }
+                        else if (lang == "java") cmd = "javac -d build $(find . -name '*.java') && java -cp build Main 2>&1";
+                        else if (lang == "python") cmd = "python3 src/main.py 2>&1 || python3 main.py 2>&1";
+                        else cmd = "cmake -S . -B build && cmake --build build && ./build/main 2>&1";
+                        gLog.info(std::string(tr("Build & Run")) + " [" + cmd + "]");
+                        gBuild.start(cmd, projDir);
+                    }
+                }
+            }
         }
 
         // Periodic re-scan
@@ -1997,11 +2437,12 @@ int main(int /*argc*/, char** /*argv*/) {
                 allowHeavyRender = false;
         }
 
-        // --- Full-window dockspace host ---
+        // --- Full-window dockspace host (leave space for status bar) ---
         {
             const ImGuiViewport* vp = ImGui::GetMainViewport();
+            float statusBarH = ImGui::GetFrameHeight() + 2.0f;
             ImGui::SetNextWindowPos(vp->WorkPos);
-            ImGui::SetNextWindowSize(vp->WorkSize);
+            ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x, vp->WorkSize.y - statusBarH));
             ImGui::SetNextWindowViewport(vp->ID);
             ImGuiWindowFlags flags =
                 ImGuiWindowFlags_NoDocking   | ImGuiWindowFlags_NoTitleBar   |
@@ -2021,26 +2462,246 @@ int main(int /*argc*/, char** /*argv*/) {
                 mainDockNeedsInit = false;
                 ImGui::DockBuilderRemoveNode(mainDockId);
                 ImGui::DockBuilderAddNode(mainDockId, ImGuiDockNodeFlags_DockSpace);
-                ImGui::DockBuilderSetNodeSize(mainDockId, vp->WorkSize);
+                ImVec2 dockSize(vp->WorkSize.x, vp->WorkSize.y - statusBarH);
+                ImGui::DockBuilderSetNodeSize(mainDockId, dockSize);
 
-                ImGuiID left, center, bottom;
-                ImGui::DockBuilderSplitNode(mainDockId, ImGuiDir_Left, 0.24f, &left, &center);
-                ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, &bottom, &center);
-                ImGui::DockBuilderDockWindow(makeWindowTitle(tr("Projects"), "Projects").c_str(), left);
-                ImGui::DockBuilderDockWindow(makeWindowTitle(tr("Log Console"), "LogConsole").c_str(), bottom);
-                ImGui::DockBuilderDockWindow(makeWindowTitle(tr("Usage Guide"), "Help").c_str(), center);
+                if (editorMode == EditorMode::None) {
+                    // Projects browser layout
+                    ImGuiID left, center, bottom;
+                    ImGui::DockBuilderSplitNode(mainDockId, ImGuiDir_Left, 0.24f, &left, &center);
+                    ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.28f, &bottom, &center);
+                    ImGui::DockBuilderDockWindow(makeWindowTitle(tr("Projects"), "Projects").c_str(), left);
+                    ImGui::DockBuilderDockWindow(makeWindowTitle(tr("Log Console"), "LogConsole").c_str(), bottom);
+                    ImGui::DockBuilderDockWindow(makeWindowTitle(tr("Usage Guide"), "Help").c_str(), center);
+                } else if (editorMode == EditorMode::GameEditor) {
+                    // Game editor layout
+                    ImGuiID left, center, right, bottom;
+                    ImGui::DockBuilderSplitNode(mainDockId,
+                        ImGuiDir_Left,  0.20f, &left, &center);
+                    ImGui::DockBuilderSplitNode(center,
+                        ImGuiDir_Right, 0.25f, &right, &center);
+                    ImGui::DockBuilderSplitNode(center,
+                        ImGuiDir_Down,  0.30f, &bottom, &center);
+                    ImGui::DockBuilderDockWindow("Scene",         left);
+                    ImGui::DockBuilderDockWindow("Inspector",     right);
+                    ImGui::DockBuilderDockWindow("Game Viewport", center);
+                    ImGui::DockBuilderDockWindow("Code Editor",   center);
+                    ImGui::DockBuilderDockWindow("Add Game Objects", center);
+                    ImGui::DockBuilderDockWindow("Game Systems",  bottom);
+                    ImGui::DockBuilderDockWindow("Game Editor",   bottom);
+                    ImGui::DockBuilderDockWindow(makeWindowTitle(tr("Log Console"), "LogConsole").c_str(), bottom);
+                } else {
+                    // UI Designer layout
+                    ImGuiID left, center, right, bottom;
+                    ImGui::DockBuilderSplitNode(mainDockId,
+                        ImGuiDir_Left,  0.18f, &left, &center);
+                    ImGui::DockBuilderSplitNode(center,
+                        ImGuiDir_Right, 0.28f, &right, &center);
+                    ImGui::DockBuilderSplitNode(center,
+                        ImGuiDir_Down,  0.25f, &bottom, &center);
+                    ImGui::DockBuilderDockWindow("Toolbox",    left);
+                    ImGui::DockBuilderDockWindow("Canvas",     center);
+                    ImGui::DockBuilderDockWindow("Properties", right);
+                    ImGui::DockBuilderDockWindow("HTML + CSS", right);
+                    ImGui::DockBuilderDockWindow(makeWindowTitle(tr("Log Console"), "LogConsole").c_str(), bottom);
+                }
                 ImGui::DockBuilderFinish(mainDockId);
             }
 
             // Menu bar
             if (ImGui::BeginMenuBar()) {
-                if (ImGui::BeginMenu(tr("File"))) {
-                    if (ImGui::MenuItem(tr("Rescan Projects")))
-                        projects = listProjects(projectsRoot);
-                    ImGui::Separator();
-                    if (ImGui::MenuItem(tr("Quit"), "Alt+F4"))
-                        running = false;
-                    ImGui::EndMenu();
+                if (editorMode == EditorMode::None) {
+                    // --- Projects browser menu ---
+                    if (ImGui::BeginMenu(tr("File"))) {
+                        if (ImGui::MenuItem(tr("Rescan Projects")))
+                            projects = listProjects(projectsRoot);
+                        ImGui::Separator();
+                        if (ImGui::MenuItem(tr("Quit"), "Alt+F4"))
+                            running = false;
+                        ImGui::EndMenu();
+                    }
+                } else {
+                    // --- Editor menu ---
+                    if (ImGui::BeginMenu(tr("File"))) {
+                        if (editorMode == EditorMode::UIDesigner) {
+                            if (ImGui::MenuItem(tr("Save UI Design"), "Ctrl+S")) {
+                                if (selectedProject) {
+                                    auto savePath = *selectedProject / "ui_layout.json";
+                                    myu::ui::saveDesign(uiDesigner, savePath);
+                                    auto bpPath = *selectedProject / "ui_breakpoints.txt";
+                                    myu::ui::saveBreakpoints(uiDesigner, bpPath);
+                                    gLog.info("Saved UI design: " + savePath.string());
+                                }
+                            }
+                            if (ImGui::MenuItem(tr("Export HTML"))) {
+                                if (selectedProject) {
+                                    auto htmlPath = *selectedProject / "ui_export.html";
+                                    std::string html = myu::ui::exportToHTML(uiDesigner.root,
+                                        static_cast<int>(uiDesigner.canvasW),
+                                        static_cast<int>(uiDesigner.canvasH));
+                                    std::ofstream f(htmlPath);
+                                    if (f) { f << html; gLog.info("Exported HTML: " + htmlPath.string()); }
+                                }
+                            }
+                            if (ImGui::BeginMenu(tr("Export Component Package"))) {
+                                if (!selectedProject) {
+                                    ImGui::MenuItem("Web (HTML/CSS/JS)", nullptr, false, false);
+                                    ImGui::MenuItem("XML (Generic)", nullptr, false, false);
+                                    ImGui::MenuItem("Desktop (C++/Qt-like)", nullptr, false, false);
+                                } else {
+                                    std::string compName = readProjectMeta(*selectedProject, "name");
+                                    if (compName.empty()) compName = "Component";
+                                    myu::ui::ComponentPackageInfo info;
+                                    info.name = compName;
+                                    info.canvasW = static_cast<int>(uiDesigner.canvasW);
+                                    info.canvasH = static_cast<int>(uiDesigner.canvasH);
+                                    info.breakpoints.clear();
+                                    for (auto& bp : uiDesigner.breakpoints) {
+                                        info.breakpoints.push_back({bp.name, bp.width, bp.height});
+                                    }
+                                    fs::path base = getTemplateLibraryDir() / myu::ui::sanitizeName(compName);
+                                    std::string err;
+                                    if (ImGui::MenuItem("Web (HTML/CSS/JS)")) {
+                                        fs::path out = base / "web";
+                                        if (myu::ui::exportComponentPackage(uiDesigner.root, info,
+                                                myu::ui::ComponentTarget::Web, out, &err))
+                                            gLog.info("Exported component package: " + out.string());
+                                        else gLog.error("Export failed: " + err);
+                                    }
+                                    if (ImGui::MenuItem("XML (Generic)")) {
+                                        fs::path out = base / "xml";
+                                        if (myu::ui::exportComponentPackage(uiDesigner.root, info,
+                                                myu::ui::ComponentTarget::Xml, out, &err))
+                                            gLog.info("Exported component package: " + out.string());
+                                        else gLog.error("Export failed: " + err);
+                                    }
+                                    if (ImGui::MenuItem("Desktop (C++/Qt-like)")) {
+                                        fs::path out = base / "desktop";
+                                        if (myu::ui::exportComponentPackage(uiDesigner.root, info,
+                                                myu::ui::ComponentTarget::Desktop, out, &err))
+                                            gLog.info("Exported component package: " + out.string());
+                                        else gLog.error("Export failed: " + err);
+                                    }
+                                }
+                                ImGui::EndMenu();
+                            }
+                            if (ImGui::MenuItem(tr("Template Library")))
+                                showTemplateLibrary = true;
+                            ImGui::Separator();
+                        }
+                        // Save / Load Flow Chart
+                        if (ImGui::MenuItem(tr("Save Flow Chart"))) {
+                            if (selectedProject) {
+                                auto fcPath = *selectedProject / "flowchart.myuflow";
+                                if (flowChart.save(fcPath))
+                                    gLog.info("Saved flow chart: " + fcPath.string());
+                                else
+                                    gLog.error("Failed to save flow chart");
+                            }
+                        }
+                        if (ImGui::MenuItem(tr("Load Flow Chart"))) {
+                            if (selectedProject) {
+                                auto fcPath = *selectedProject / "flowchart.myuflow";
+                                if (flowChart.load(fcPath)) {
+                                    showFlowChart = true;
+                                    gLog.info("Loaded flow chart: " + fcPath.string());
+                                } else {
+                                    gLog.warn("No flow chart found: " + fcPath.string());
+                                }
+                            }
+                        }
+                        ImGui::Separator();
+                        if (ImGui::MenuItem(tr("Close Project"))) {
+                            editorMode = EditorMode::None;
+                            uiDesignerOpen = false;
+                            gameEditorOpen = false;
+                            openedProjectName.clear();
+                            mainDockNeedsInit = true;
+                            // Restore auxiliary panel defaults
+                            showVoxelEditor = false;
+                            showBlockbench = false;
+                            showResources = false;
+                            showEcs = false;
+                            showEvents = false;
+                            // Restore native window title
+                            SDL_SetWindowTitle(window, "MyuEngine v0.1.0");
+                        }
+                        ImGui::Separator();
+                        if (ImGui::MenuItem(tr("Quit"), "Alt+F4"))
+                            running = false;
+                        ImGui::EndMenu();
+                    }
+                    // Build menu
+                    if (ImGui::BeginMenu(tr("Build"))) {
+                        if (!gBuild.running) {
+                            if (ImGui::MenuItem(tr("Build"), "Ctrl+B")) {
+                                if (selectedProject) {
+                                    std::string projDir = selectedProject->string();
+                                    std::string lang = readProjectMeta(*selectedProject, "language");
+                                    std::string projName = readProjectMeta(*selectedProject, "name");
+                                    std::string cmd;
+                                    if (lang == "cpp") cmd = "cmake -S . -B build && cmake --build build 2>&1";
+                                    else if (lang == "java") cmd = "javac -d build $(find . -name '*.java') 2>&1";
+                                    else if (lang == "python") cmd = "python -m py_compile $(find . -name '*.py') 2>&1";
+                                    else if (lang == "web") cmd = "echo 'Web project — no build step required'";
+                                    else cmd = "cmake -S . -B build && cmake --build build 2>&1";
+                                    gLog.info(std::string(tr("Building...")) + " [" + cmd + "]");
+                                    gBuild.start(cmd, projDir);
+                                }
+                            }
+                            if (ImGui::MenuItem(tr("Run"), "Ctrl+R")) {
+                                if (selectedProject) {
+                                    std::string projDir = selectedProject->string();
+                                    std::string lang = readProjectMeta(*selectedProject, "language");
+                                    std::string projName = readProjectMeta(*selectedProject, "name");
+                                    std::string cmd;
+                                    if (lang == "cpp") {
+                                        std::string exe = projName.empty() ? "MyGame" : projName;
+                                        cmd = "./build/" + exe + " 2>&1";
+                                    }
+                                    else if (lang == "java") cmd = "java -cp build Main 2>&1";
+                                    else if (lang == "python") cmd = "python3 src/main.py 2>&1 || python3 main.py 2>&1";
+                                    else if (lang == "web") cmd = "echo 'Open public/index.html in browser'";
+                                    else cmd = "./build/main 2>&1";
+                                    gLog.info(std::string(tr("Running...")) + " [" + cmd + "]");
+                                    gBuild.start(cmd, projDir);
+                                }
+                            }
+                            if (ImGui::MenuItem(tr("Build & Run"), "Ctrl+Shift+B")) {
+                                if (selectedProject) {
+                                    std::string projDir = selectedProject->string();
+                                    std::string lang = readProjectMeta(*selectedProject, "language");
+                                    std::string projName = readProjectMeta(*selectedProject, "name");
+                                    std::string cmd;
+                                    if (lang == "cpp") {
+                                        std::string exe = projName.empty() ? "MyGame" : projName;
+                                        cmd = "cmake -S . -B build && cmake --build build && ./build/" + exe + " 2>&1";
+                                    }
+                                    else if (lang == "java") cmd = "javac -d build $(find . -name '*.java') && java -cp build Main 2>&1";
+                                    else if (lang == "python") cmd = "python3 src/main.py 2>&1 || python3 main.py 2>&1";
+                                    else if (lang == "web") cmd = "echo 'Open public/index.html in browser'";
+                                    else cmd = "cmake -S . -B build && cmake --build build && ./build/main 2>&1";
+                                    gLog.info(std::string(tr("Build & Run")) + " [" + cmd + "]");
+                                    gBuild.start(cmd, projDir);
+                                }
+                            }
+                        } else {
+                            ImGui::MenuItem(tr("Building..."), nullptr, false, false);
+                            if (ImGui::MenuItem(tr("Stop"))) gBuild.stop();
+                        }
+                        ImGui::EndMenu();
+                    }
+                    // Tools menu
+                    if (ImGui::BeginMenu(tr("Tools"))) {
+                        ImGui::MenuItem(tr("Flow Chart"), nullptr, &showFlowChart);
+                        ImGui::Separator();
+                        ImGui::MenuItem(tr("Voxel Modeler"), nullptr, &showVoxelEditor);
+                        ImGui::MenuItem(tr("Blockbench Import"), nullptr, &showBlockbench);
+                        ImGui::MenuItem(tr("Resources"), nullptr, &showResources);
+                        ImGui::MenuItem("ECS", nullptr, &showEcs);
+                        ImGui::MenuItem(tr("Events"), nullptr, &showEvents);
+                        ImGui::EndMenu();
+                    }
                 }
                 if (ImGui::BeginMenu(tr("Settings"))) {
                     if (ImGui::Checkbox(tr("Enable New Window (Viewports)"), &enableViewports)) {
@@ -2063,7 +2724,7 @@ int main(int /*argc*/, char** /*argv*/) {
                     ImGui::Checkbox(tr("Pause Platform When Minimized"), &pausePlatformWhenMinimized);
                     ImGui::SetNextItemWidth(120);
                     ImGui::DragInt(tr("Idle Delay (ms)"), &idleRenderMs, 10, 0, 2000);
-                    ImGui::TextDisabled("%s", tr("0 = unlimited"));
+                    ImGui::TextDisabled("%s", tr("0_unlimited"));
 
                     ImGui::Separator();
                     ImGui::TextDisabled("%s", tr("Language"));
@@ -2106,7 +2767,9 @@ int main(int /*argc*/, char** /*argv*/) {
                     if (ImGui::Button(tr("Apply Data Root"))) {
                         std::string err;
                         fs::path newRoot = fs::path(dataRootBuf);
-                        if (!newRoot.empty() && writePortableHomeFile(newRoot, err)) {
+                        if (!newRoot.empty() && !isUnderRestrictedRoot(newRoot)) {
+                            gLog.error("Data root must be under /home/chiayu/projects");
+                        } else if (!newRoot.empty() && writePortableHomeFile(newRoot, err)) {
                             std::string moveErr;
                             moveAppData(dataRoot, newRoot, moveErr);
                             dataRoot = getUserDataDir();
@@ -2136,7 +2799,10 @@ int main(int /*argc*/, char** /*argv*/) {
                     ImGui::InputText(tr("Install Dir"), simInstallBuf, sizeof(simInstallBuf));
                     if (ImGui::Button(tr("Simulate Install"))) {
                         std::string err;
-                        if (simulateInstall(fs::path(simInstallBuf), err))
+                        fs::path target = fs::path(simInstallBuf);
+                        if (!target.empty() && !isUnderRestrictedRoot(target)) {
+                            gLog.error("Install dir must be under /home/chiayu/projects");
+                        } else if (simulateInstall(target, err))
                             gLog.info("Simulated install to: " + std::string(simInstallBuf));
                         else
                             gLog.error("Simulate install failed: " + err);
@@ -2149,6 +2815,16 @@ int main(int /*argc*/, char** /*argv*/) {
                         showAbout = true;
                     ImGui::EndMenu();
                 }
+
+                // Show project name badge in menu bar (right-aligned)
+                if (editorMode != EditorMode::None && !openedProjectName.empty()) {
+                    float barW = ImGui::GetWindowWidth();
+                    std::string badge = openedProjectName;
+                    float textW = ImGui::CalcTextSize(badge.c_str()).x + 16.0f;
+                    ImGui::SameLine(barW - textW);
+                    ImGui::TextDisabled("%s", badge.c_str());
+                }
+
                 ImGui::EndMenuBar();
             }
             ImGui::End();
@@ -2156,7 +2832,10 @@ int main(int /*argc*/, char** /*argv*/) {
 
         // --- Panels ---
         bool projectOpenRequested = false;
-        drawProjectsPanel(projectsRoot, projects, selectedProject, createWizard, projectOpenRequested);
+        // Only show projects panel when no editor is open
+        if (editorMode == EditorMode::None) {
+            drawProjectsPanel(projectsRoot, projects, selectedProject, createWizard, projectOpenRequested);
+        }
         drawCreateWizard(createWizard, projectsRoot, projects);
 
         // Handle Open button press – route to correct editor
@@ -2173,17 +2852,53 @@ int main(int /*argc*/, char** /*argv*/) {
             bool isGameTemplate = (tmpl == "2D Game" || tmpl == "3D Game");
             if (isGameTemplate) {
                 // Open Game Editor
+                showVoxelEditor = false;    // Hide auxiliary panels
+                showBlockbench = false;
+                showResources = false;
+                showEcs = false;
+                showEvents = false;
                 editorMode = EditorMode::GameEditor;
                 gameEditorOpen = true;
-                editorDockNeedsInit = true;
+                mainDockNeedsInit = true;
                 gameEditor = myu::editor::GameEditorState();
-                gameEditor.initDefaultScene();
+                gameEditor.resources = &resources;
+                gameEditor.projectDir = *selectedProject;
+                try {
+                    gameEditor.initDefaultScene();
+                    if (gameEditor.board.cells.empty()) {
+                        gLog.error("Board initialization failed; cells are empty after init");
+                        editorMode = EditorMode::None;
+                        gameEditorOpen = false;
+                    }
+                } catch (const std::exception& e) {
+                    gLog.error(std::string("Exception during initDefaultScene: ") + e.what());
+                    editorMode = EditorMode::None;
+                    gameEditorOpen = false;
+                    // Continue to prevent crash
+                }
+                gameEditor.scanProjectFiles();
+                // Auto-open main source file
+                if (!gameEditor.projectFiles.empty()) {
+                    for (auto& f : gameEditor.projectFiles) {
+                        if (f.find("main.cpp") != std::string::npos ||
+                            f.find("main.py")  != std::string::npos ||
+                            f.find("Main.java") != std::string::npos) {
+                            gameEditor.openFile(f);
+                            break;
+                        }
+                    }
+                }
                 gLog.info("Game Editor opened for: " + openedProjectName);
             } else {
                 // Open UI Designer (for 2D Game, Desktop App, etc.)
+                showVoxelEditor = false;    // Hide auxiliary panels
+                showBlockbench = false;
+                showResources = false;
+                showEcs = false;
+                showEvents = false;
                 editorMode = EditorMode::UIDesigner;
                 uiDesignerOpen = true;
-                editorDockNeedsInit = true;
+                mainDockNeedsInit = true;
                 uiDesigner = myu::ui::DesignerState();
                 uiDesigner.savePath = *selectedProject / "ui_layout.json";
 
@@ -2191,6 +2906,11 @@ int main(int /*argc*/, char** /*argv*/) {
                 if (fs::exists(existingHtml)) {
                     myu::ui::loadDesignHTML(uiDesigner, existingHtml);
                     gLog.info("Loaded existing UI design from: " + existingHtml.string());
+                }
+                auto bpPath = *selectedProject / "ui_breakpoints.txt";
+                if (fs::exists(bpPath)) {
+                    myu::ui::loadBreakpoints(uiDesigner, bpPath);
+                    gLog.info("Loaded UI breakpoints: " + bpPath.string());
                 }
                 gLog.info("UI Designer opened for: " + openedProjectName);
             }
@@ -2202,192 +2922,106 @@ int main(int /*argc*/, char** /*argv*/) {
                 flowChart.load(fcPath);
                 gLog.info("Loaded flow chart: " + fcPath.string());
             }
-        }
 
-        // Editor host window (opens as a new OS window via viewports)
-        if (editorMode != EditorMode::None) {
-            bool editorHostOpen = true;
-            std::string editorTitle = "MyuEngine - " + openedProjectName + "###EditorHost";
-            ImGuiWindowFlags hostFlags = ImGuiWindowFlags_NoDocking |
-                                          ImGuiWindowFlags_NoCollapse |
-                                          ImGuiWindowFlags_MenuBar;
-            ImGui::SetNextWindowSize(ImVec2(1280, 720), ImGuiCond_Once);
-            const ImGuiViewport* mainVp = ImGui::GetMainViewport();
-            ImGui::SetNextWindowPos(
-                ImVec2(mainVp->Pos.x + mainVp->Size.x + 40,
-                       mainVp->Pos.y + 40), ImGuiCond_Once);
-            ImGui::Begin(editorTitle.c_str(), &editorHostOpen, hostFlags);
-
-            // Editor menu bar
-            if (ImGui::BeginMenuBar()) {
-                if (ImGui::BeginMenu(tr("File"))) {
-                    if (editorMode == EditorMode::UIDesigner) {
-                        if (ImGui::MenuItem(tr("Save UI Design"), "Ctrl+S")) {
-                            if (selectedProject) {
-                                auto savePath = *selectedProject / "ui_layout.json";
-                                myu::ui::saveDesign(uiDesigner, savePath);
-                                gLog.info("Saved UI design: " + savePath.string());
-                            }
-                        }
-                        if (ImGui::MenuItem(tr("Export HTML"))) {
-                            if (selectedProject) {
-                                auto htmlPath = *selectedProject / "ui_export.html";
-                                std::string html = myu::ui::exportToHTML(uiDesigner.root,
-                                    static_cast<int>(uiDesigner.canvasW),
-                                    static_cast<int>(uiDesigner.canvasH));
-                                std::ofstream f(htmlPath);
-                                if (f) { f << html; gLog.info("Exported HTML: " + htmlPath.string()); }
-                            }
-                        }
-                        ImGui::Separator();
-                    }
-                    // Save / Load Flow Chart
-                    if (ImGui::MenuItem(tr("Save Flow Chart"))) {
-                        if (selectedProject) {
-                            auto fcPath = *selectedProject / "flowchart.myuflow";
-                            if (flowChart.save(fcPath))
-                                gLog.info("Saved flow chart: " + fcPath.string());
-                            else
-                                gLog.error("Failed to save flow chart");
-                        }
-                    }
-                    if (ImGui::MenuItem(tr("Load Flow Chart"))) {
-                        if (selectedProject) {
-                            auto fcPath = *selectedProject / "flowchart.myuflow";
-                            if (flowChart.load(fcPath)) {
-                                showFlowChart = true;
-                                gLog.info("Loaded flow chart: " + fcPath.string());
-                            } else {
-                                gLog.warn("No flow chart found: " + fcPath.string());
-                            }
-                        }
-                    }
-                    ImGui::Separator();
-                    if (ImGui::MenuItem(tr("Close Project"))) editorHostOpen = false;
-                    ImGui::EndMenu();
-                }
-                if (ImGui::BeginMenu(tr("Build"))) {
-                    if (!gBuild.running) {
-                        if (ImGui::MenuItem(tr("Build"), "Ctrl+B")) {
-                            if (selectedProject) {
-                                std::string projDir = selectedProject->string();
-                                std::string lang = readProjectMeta(*selectedProject, "language");
-                                std::string cmd;
-                                if (lang == "cpp") cmd = "cmake -B build && cmake --build build 2>&1";
-                                else if (lang == "java") cmd = "javac -d build $(find . -name '*.java') 2>&1";
-                                else if (lang == "python") cmd = "python -m py_compile $(find . -name '*.py') 2>&1";
-                                else if (lang == "web") cmd = "echo 'Web project — no build step required'";
-                                else cmd = "cmake -B build && cmake --build build 2>&1";
-                                gLog.info(std::string(tr("Building...")) + " [" + cmd + "]");
-                                gBuild.start(cmd, projDir);
-                            }
-                        }
-                        if (ImGui::MenuItem(tr("Run"), "Ctrl+R")) {
-                            if (selectedProject) {
-                                std::string projDir = selectedProject->string();
-                                std::string lang = readProjectMeta(*selectedProject, "language");
-                                std::string cmd;
-                                if (lang == "cpp") cmd = "./build/main 2>&1 || ./build/$(ls build/ | head -1) 2>&1";
-                                else if (lang == "java") cmd = "java -cp build Main 2>&1";
-                                else if (lang == "python") {
-                                    // Find a main.py in src or root
-                                    cmd = "python3 src/main.py 2>&1 || python3 main.py 2>&1";
-                                }
-                                else if (lang == "web") cmd = "echo 'Open public/index.html in browser'";
-                                else cmd = "./build/main 2>&1";
-                                gLog.info(std::string(tr("Running...")) + " [" + cmd + "]");
-                                gBuild.start(cmd, projDir);
-                            }
-                        }
-                        if (ImGui::MenuItem(tr("Build & Run"), "Ctrl+Shift+B")) {
-                            if (selectedProject) {
-                                std::string projDir = selectedProject->string();
-                                std::string lang = readProjectMeta(*selectedProject, "language");
-                                std::string cmd;
-                                if (lang == "cpp") cmd = "cmake -B build && cmake --build build && ./build/main 2>&1";
-                                else if (lang == "java") cmd = "javac -d build $(find . -name '*.java') && java -cp build Main 2>&1";
-                                else if (lang == "python") cmd = "python3 src/main.py 2>&1 || python3 main.py 2>&1";
-                                else if (lang == "web") cmd = "echo 'Open public/index.html in browser'";
-                                else cmd = "cmake -B build && cmake --build build && ./build/main 2>&1";
-                                gLog.info(std::string(tr("Build & Run")) + " [" + cmd + "]");
-                                gBuild.start(cmd, projDir);
-                            }
-                        }
-                    } else {
-                        ImGui::MenuItem(tr("Building..."), nullptr, false, false);
-                        if (ImGui::MenuItem(tr("Stop"))) gBuild.stop();
-                    }
-                    ImGui::EndMenu();
-                }
-                if (ImGui::BeginMenu(tr("Tools"))) {
-                    ImGui::MenuItem(tr("Flow Chart"), nullptr, &showFlowChart);
-                    ImGui::Separator();
-                    ImGui::MenuItem(tr("Voxel Modeler"), nullptr, &showVoxelEditor);
-                    ImGui::MenuItem(tr("Blockbench Import"), nullptr, &showBlockbench);
-                    ImGui::MenuItem(tr("Resources"), nullptr, &showResources);
-                    ImGui::MenuItem("ECS", nullptr, &showEcs);
-                    ImGui::MenuItem(tr("Events"), nullptr, &showEvents);
-                    ImGui::EndMenu();
-                }
-                ImGui::EndMenuBar();
+            // Load resources
+            auto resPath = *selectedProject / "resources.mye";
+            if (fs::exists(resPath)) {
+                resources = myu::engine::ResourceManager();
+                loadResourcesFromFile(resources, resPath);
+                gLog.info("Loaded resources: " + resPath.string());
             }
 
-            // Build status bar
+            // Update native window title to reflect project
+            std::string winTitle = "MyuEngine - " + openedProjectName;
+            SDL_SetWindowTitle(window, winTitle.c_str());
+        }
+
+        // --- Editor panels (dock into main dockspace MyuDock) ---
+        if (editorMode != EditorMode::None) {
+            // Build status bar (rendered at top of workspace)
             if (gBuild.running) {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.9f, 0.3f, 1));
+                std::string buildTitle = makeWindowTitle(tr("Build Status"), "BuildStatus");
+                ImGui::Begin(buildTitle.c_str(), nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize);
                 ImGui::Text("  [%s]", tr("Building..."));
+                ImGui::End();
                 ImGui::PopStyleColor();
             }
 
-            // Editor dockspace
-            ImGuiID editorDockId = ImGui::GetID("EditorDock");
-            ImGui::DockSpace(editorDockId, ImVec2(0, 0));
-
-            // First-time layout
-            if (editorDockNeedsInit) {
-                editorDockNeedsInit = false;
-                ImGui::DockBuilderRemoveNode(editorDockId);
-                ImGui::DockBuilderAddNode(editorDockId,
-                    ImGuiDockNodeFlags_DockSpace);
-                ImGui::DockBuilderSetNodeSize(editorDockId, ImVec2(1260, 680));
-
-                if (editorMode == EditorMode::GameEditor) {
-                    ImGuiID left, center, right, bottom;
-                    ImGui::DockBuilderSplitNode(editorDockId,
-                        ImGuiDir_Left,  0.20f, &left, &center);
-                    ImGui::DockBuilderSplitNode(center,
-                        ImGuiDir_Right, 0.25f, &right, &center);
-                    ImGui::DockBuilderSplitNode(center,
-                        ImGuiDir_Down,  0.30f, &bottom, &center);
-                    ImGui::DockBuilderDockWindow("Scene",         left);
-                    ImGui::DockBuilderDockWindow("Inspector",     right);
-                    ImGui::DockBuilderDockWindow("Game Viewport", center);
-                    ImGui::DockBuilderDockWindow("Board Editor",  center);
-                    ImGui::DockBuilderDockWindow("Card Editor",   center);
-                    ImGui::DockBuilderDockWindow("Game Systems",  bottom);
-                    ImGui::DockBuilderDockWindow("Game Editor",   bottom);
-                } else {
-                    ImGuiID left, center, right;
-                    ImGui::DockBuilderSplitNode(editorDockId,
-                        ImGuiDir_Left,  0.18f, &left, &center);
-                    ImGui::DockBuilderSplitNode(center,
-                        ImGuiDir_Right, 0.28f, &right, &center);
-                    ImGui::DockBuilderDockWindow("Toolbox",    left);
-                    ImGui::DockBuilderDockWindow("Canvas",     center);
-                    ImGui::DockBuilderDockWindow("Properties", right);
-                    ImGui::DockBuilderDockWindow("HTML + CSS", right);
-                }
-                ImGui::DockBuilderFinish(editorDockId);
-            }
-
-            ImGui::End();
-
-            // Draw the editor panels (they dock into EditorDock)
+            // Draw the editor panels (they dock into MyuDock)
             if (editorMode == EditorMode::UIDesigner && uiDesignerOpen) {
                 myu::ui::drawUIDesigner(uiDesigner, allowHeavyRender);
             }
             if (editorMode == EditorMode::GameEditor && gameEditorOpen) {
                 myu::editor::drawGameEditor(gameEditor, allowHeavyRender);
+            }
+
+            // Template library
+            if (showTemplateLibrary) {
+                std::string tmplTitle = makeWindowTitle(tr("Template Library"), "TemplateLibrary");
+                if (ImGui::Begin(tmplTitle.c_str(), &showTemplateLibrary)) {
+                    static int selectedIdx = -1;
+                    auto templates = listTemplateDirs();
+
+                    ImGui::BeginChild("tmpl_list", ImVec2(220, 0), true);
+                    for (int i = 0; i < static_cast<int>(templates.size()); ++i) {
+                        std::string name = templates[i].filename().string();
+                        if (ImGui::Selectable(name.c_str(), selectedIdx == i))
+                            selectedIdx = i;
+                    }
+                    ImGui::EndChild();
+
+                    ImGui::SameLine();
+                    ImGui::BeginChild("tmpl_details", ImVec2(0, 0), true);
+                    if (selectedIdx >= 0 && selectedIdx < static_cast<int>(templates.size())) {
+                        fs::path tmplDir = templates[selectedIdx];
+                        std::string tmplName = tmplDir.filename().string();
+                        ImGui::Text("Template: %s", tmplName.c_str());
+                        fs::path webDir = tmplDir / "web";
+                        fs::path xmlDir = tmplDir / "xml";
+                        fs::path desktopDir = tmplDir / "desktop";
+
+                        bool hasWeb = fs::exists(webDir);
+                        bool hasXml = fs::exists(xmlDir);
+                        bool hasDesktop = fs::exists(desktopDir);
+
+                        ImGui::Text("Targets:");
+                        ImGui::BulletText("Web: %s", hasWeb ? "Yes" : "No");
+                        ImGui::BulletText("XML: %s", hasXml ? "Yes" : "No");
+                        ImGui::BulletText("Desktop: %s", hasDesktop ? "Yes" : "No");
+
+                        if (!selectedProject) {
+                            ImGui::TextDisabled("Open a project to apply templates.");
+                        } else {
+                            fs::path outBase = *selectedProject / "Templates" / tmplName;
+                            std::string err;
+                            if (ImGui::Button("Apply Web") && hasWeb) {
+                                if (copyDirectoryRecursive(webDir, outBase / "web", err))
+                                    gLog.info("Applied template: " + tmplName + " (web)");
+                                else
+                                    gLog.error("Apply failed: " + err);
+                            }
+                            ImGui::SameLine();
+                            if (ImGui::Button("Apply XML") && hasXml) {
+                                if (copyDirectoryRecursive(xmlDir, outBase / "xml", err))
+                                    gLog.info("Applied template: " + tmplName + " (xml)");
+                                else
+                                    gLog.error("Apply failed: " + err);
+                            }
+                            ImGui::SameLine();
+                            if (ImGui::Button("Apply Desktop") && hasDesktop) {
+                                if (copyDirectoryRecursive(desktopDir, outBase / "desktop", err))
+                                    gLog.info("Applied template: " + tmplName + " (desktop)");
+                                else
+                                    gLog.error("Apply failed: " + err);
+                            }
+                        }
+                    } else {
+                        ImGui::TextDisabled("Select a template to view details.");
+                    }
+                    ImGui::EndChild();
+                }
+                ImGui::End();
             }
 
             // Voxel modeler
@@ -2431,10 +3065,34 @@ int main(int /*argc*/, char** /*argv*/) {
                 if (ImGui::Button(tr("Add Resource"))) {
                     resources.add(static_cast<myu::engine::ResourceType>(rtype), rname, rpath);
                 }
+                ImGui::SameLine();
+                if (ImGui::Button("Save Resources") && selectedProject) {
+                    auto resPath = *selectedProject / "resources.mye";
+                    saveResourcesToFile(resources, resPath);
+                    gLog.info("Saved resources: " + resPath.string());
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Reload") && selectedProject) {
+                    resources = myu::engine::ResourceManager();
+                    auto resPath = *selectedProject / "resources.mye";
+                    loadResourcesFromFile(resources, resPath);
+                    gLog.info("Reloaded resources: " + resPath.string());
+                }
                 ImGui::Separator();
                 for (const auto& e : resources.entries()) {
-                    ImGui::BulletText("%s (%s)", e.name.c_str(), e.path.c_str());
+                    ImGui::BulletText("%s [%s] (%s)", e.name.c_str(), resourceTypeToString(e.type), e.path.c_str());
+                    if (editorMode == EditorMode::GameEditor && gameEditorOpen && gameEditor.selectedObject) {
+                        if (e.type == myu::engine::ResourceType::Model) {
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton(("Use##" + e.name).c_str())) {
+                                gameEditor.selectedObject->modelPath = e.name;
+                                gameEditor.selectedObject->tag = "model";
+                            }
+                        }
+                    }
                 }
+                ImGui::Separator();
+                ImGui::TextDisabled("Tip: glTF/GLB models supported (static mesh only). Add a Model resource and assign it.");
                 ImGui::End();
             }
 
@@ -2506,17 +3164,49 @@ int main(int /*argc*/, char** /*argv*/) {
                 else
                     gLog.error(msg);
             }
-
-            // Handle host window close (X button or Close menu)
-            if (!editorHostOpen) {
-                editorMode = EditorMode::None;
-                uiDesignerOpen = false;
-                gameEditorOpen = false;
-                openedProjectName.clear();
-            }
         }
 
         drawLogPanel(gLog);
+
+        // --- Status bar (bottom of screen) ---
+        {
+            const ImGuiViewport* vp = ImGui::GetMainViewport();
+            float statusH = ImGui::GetFrameHeight() + 2.0f;
+            ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x, vp->WorkPos.y + vp->WorkSize.y - statusH));
+            ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x, statusH));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 2));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.08f, 0.10f, 1.0f));
+            ImGui::Begin("##StatusBar", nullptr,
+                ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar |
+                ImGuiWindowFlags_NoResize  | ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoNav);
+
+            // Left: mode indicator
+            if (editorMode == EditorMode::None) {
+                ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "%s", tr("Projects"));
+            } else if (editorMode == EditorMode::GameEditor) {
+                ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1.0f), "Game Editor");
+            } else {
+                ImGui::TextColored(ImVec4(0.9f, 0.7f, 0.3f, 1.0f), "UI Designer");
+            }
+
+            // Center: build status
+            if (gBuild.running) {
+                ImGui::SameLine(vp->WorkSize.x * 0.35f);
+                ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.3f, 1.0f), "[%s]", tr("Building..."));
+            }
+
+            // Right: FPS
+            ImGui::SameLine(vp->WorkSize.x - 120.0f);
+            ImGui::TextDisabled("%.0f FPS", io.Framerate);
+
+            ImGui::End();
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar(3);
+        }
 
         // --- Help panel ---
         if (showHelp) drawHelpPanel(&showHelp);
